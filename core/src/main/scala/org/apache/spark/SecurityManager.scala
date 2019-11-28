@@ -36,13 +36,11 @@ import org.apache.spark.util.Utils
 /**
  * Spark class responsible for security.
  *
- * In general this class should be instantiated by the SparkEnv and most components
- * should access it from that. There are some cases where the SparkEnv hasn't been
- * initialized yet and this class must be instantiated directly.
+ * 通常，此类应由SparkEnv实例化，并且大多数组件都应从中访问它。
+  * 在某些情况下，SparkEnv尚未初始化，并且必须直接实例化此类。
  *
- * This class implements all of the configuration related to security features described
- * in the "Security" document. Please refer to that document for specific features implemented
- * here.
+ * 此类实现与“安全性”文档中描述的安全性功能有关的所有配置。
+  * 请参阅该文档以了解此处实现的特定功能。
  */
 private[spark] class SecurityManager(
     sparkConf: SparkConf,
@@ -55,26 +53,55 @@ private[spark] class SecurityManager(
   // allow all users/groups to have view/modify permissions
   private val WILDCARD_ACL = "*"
 
+  /**
+    * 是否开启认证
+    */
   private val authOn = sparkConf.get(NETWORK_AUTH_ENABLED)
+
+  /**
+    * 是否对账号进行授权检查
+    */
   private var aclsOn = sparkConf.get(ACLS_ENABLE)
 
+  /**
+    * 管理员账号集合
+    */
   // admin acls should be set before view or modify acls
   private var adminAcls: Set[String] = sparkConf.get(ADMIN_ACLS).toSet
 
+  /**
+    * 管理账号所在组的集合
+    */
   // admin group acls should be set before view or modify group acls
   private var adminAclsGroups: Set[String] = sparkConf.get(ADMIN_ACLS_GROUPS).toSet
 
+  /**
+    * 有查看权限的账号集合
+    */
   private var viewAcls: Set[String] = _
 
+
+  /**
+    * 有查看权限组的账号集合
+    */
   private var viewAclsGroups: Set[String] = _
 
   // list of users who have permission to modify the application. This should
   // apply to both UI and CLI for things like killing the application.
+  /**
+    * 有修改权限的账号集合
+    */
   private var modifyAcls: Set[String] = _
 
+  /**
+    * 有修改权限的组的账号集合
+    */
   private var modifyAclsGroups: Set[String] = _
 
   // always add the current user and SPARK_USER to the viewAcls
+  /**
+    * 默认用户
+    */
   private val defaultAclUsers = Set[String](System.getProperty("user.name", ""),
     Utils.getCurrentUserName())
 
@@ -84,6 +111,9 @@ private[spark] class SecurityManager(
   setViewAclsGroups(sparkConf.get(UI_VIEW_ACLS_GROUPS))
   setModifyAclsGroups(sparkConf.get(MODIFY_ACLS_GROUPS))
 
+  /**
+    * 秘钥，yarn模式下，首先使用SparkCookie从Hadoop UGI中获取密钥，其他模式从SPARK_AUTH_SECRET或spark.authenticate.secret获取
+    */
   private var secretKey: String = _
   logInfo("SecurityManager: authentication " + (if (authOn) "enabled" else "disabled") +
     "; ui acls " + (if (aclsOn) "enabled" else "disabled") +

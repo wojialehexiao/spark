@@ -21,26 +21,25 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 
 import com.codahale.metrics.{Gauge, Timer}
-
-import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
 import org.apache.spark.util.Utils
+import org.apache.spark.{SparkConf, SparkContext}
 
 /**
- * An asynchronous queue for events. All events posted to this queue will be delivered to the child
- * listeners in a separate thread.
- *
- * Delivery will only begin when the `start()` method is called. The `stop()` method should be
- * called when no more events need to be delivered.
- */
+  * 事件的异步队列。
+  * 发布到此队列的所有事件将在单独的线程中传递给子侦听器。
+  *
+  * Delivery will only begin when the `start()` method is called. The `stop()` method should be
+  * called when no more events need to be delivered.
+  */
 private class AsyncEventQueue(
-    val name: String,
-    conf: SparkConf,
-    metrics: LiveListenerBusMetrics,
-    bus: LiveListenerBus)
+                               val name: String,
+                               conf: SparkConf,
+                               metrics: LiveListenerBusMetrics,
+                               bus: LiveListenerBus)
   extends SparkListenerBus
-  with Logging {
+    with Logging {
 
   import AsyncEventQueue._
 
@@ -51,7 +50,7 @@ private class AsyncEventQueue(
   // LISTENER_BUS_EVENT_QUEUE_CAPACITY
   private[scheduler] def capacity: Int = {
     val queuesize = conf.getInt(s"spark.scheduler.listenerbus.eventqueue.${name}.capacity",
-                                conf.get(LISTENER_BUS_EVENT_QUEUE_CAPACITY))
+      conf.get(LISTENER_BUS_EVENT_QUEUE_CAPACITY))
     assert(queuesize > 0, s"capacity for event queue $name must be greater than 0, " +
       s"but $queuesize is configured.")
     queuesize
@@ -89,6 +88,7 @@ private class AsyncEventQueue(
 
   private val dispatchThread = new Thread(s"spark-listener-group-$name") {
     setDaemon(true)
+
     override def run(): Unit = Utils.tryOrStopSparkContext(sc) {
       dispatch()
     }
@@ -114,10 +114,10 @@ private class AsyncEventQueue(
   }
 
   /**
-   * Start an asynchronous thread to dispatch events to the underlying listeners.
-   *
-   * @param sc Used to stop the SparkContext in case the async dispatcher fails.
-   */
+    * Start an asynchronous thread to dispatch events to the underlying listeners.
+    *
+    * @param sc Used to stop the SparkContext in case the async dispatcher fails.
+    */
   private[scheduler] def start(sc: SparkContext): Unit = {
     if (started.compareAndSet(false, true)) {
       this.sc = sc
@@ -128,9 +128,9 @@ private class AsyncEventQueue(
   }
 
   /**
-   * Stop the listener bus. It will wait until the queued events have been processed, but new
-   * events will be dropped.
-   */
+    * Stop the listener bus. It will wait until the queued events have been processed, but new
+    * events will be dropped.
+    */
   private[scheduler] def stop(): Unit = {
     if (!started.get()) {
       throw new IllegalStateException(s"Attempted to stop $name that has not yet started!")
@@ -187,10 +187,10 @@ private class AsyncEventQueue(
   }
 
   /**
-   * For testing only. Wait until there are no more events in the queue.
-   *
-   * @return true if the queue is empty.
-   */
+    * For testing only. Wait until there are no more events in the queue.
+    *
+    * @return true if the queue is empty.
+    */
   def waitUntilEmpty(deadline: Long): Boolean = {
     while (eventCount.get() != 0) {
       if (System.currentTimeMillis > deadline) {
@@ -211,6 +211,6 @@ private class AsyncEventQueue(
 
 private object AsyncEventQueue {
 
-  val POISON_PILL = new SparkListenerEvent() { }
+  val POISON_PILL = new SparkListenerEvent() {}
 
 }

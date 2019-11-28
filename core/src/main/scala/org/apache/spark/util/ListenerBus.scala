@@ -28,7 +28,7 @@ import com.codahale.metrics.Timer
 import org.apache.spark.internal.Logging
 
 /**
- * An event bus which posts events to its listeners.
+ * 事件总线，将事件发布到其侦听器。
  */
 private[spark] trait ListenerBus[L <: AnyRef, E] extends Logging {
 

@@ -35,8 +35,8 @@ import org.apache.spark.ui.SparkUI
 import org.apache.spark.ui.scope._
 
 /**
- * A Spark listener that writes application information to a data store. The types written to the
- * store are defined in the `storeTypes.scala` file and are based on the public REST API.
+ * 将应用程序信息写入数据存储的Spark侦听器。
+  * 写入存储的类型在`storeTypes.scala`文件中定义，并且基于公共REST API。
  *
  * @param lastUpdateTime When replaying logs, the log's last update time, so that the duration of
  *                       unfinished tasks can be more accurately calculated (see SPARK-21922).

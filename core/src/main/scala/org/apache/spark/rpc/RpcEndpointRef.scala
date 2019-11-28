@@ -30,12 +30,24 @@ import org.apache.spark.util.RpcUtils
 private[spark] abstract class RpcEndpointRef(conf: SparkConf)
   extends Serializable with Logging {
 
+  /**
+    * 最大重新连接次数
+    */
   private[this] val maxRetries = RpcUtils.numRetries(conf)
+
+  /**
+    * 每次重新连接需要等待的毫秒数
+    */
   private[this] val retryWaitMs = RpcUtils.retryWaitMs(conf)
+
+  /**
+    * ask操作默认的超时时间
+    */
   private[this] val defaultAskTimeout = RpcUtils.askRpcTimeout(conf)
 
   /**
    * return the address for the [[RpcEndpointRef]]
+    * 返回当前RpcEndpointRef对应的RpcEndpoint的地址
    */
   def address: RpcAddress
 
@@ -43,6 +55,7 @@ private[spark] abstract class RpcEndpointRef(conf: SparkConf)
 
   /**
    * Sends a one-way asynchronous message. Fire-and-forget semantics.
+    * 发送单项异步的消息，不会有任何状态记录，也不会期待返回
    */
   def send(message: Any): Unit
 
@@ -62,6 +75,7 @@ private[spark] abstract class RpcEndpointRef(conf: SparkConf)
    * receive the reply within the specified timeout.
    *
    * This method only sends the message once and never retries.
+    *
    */
   def ask[T: ClassTag](message: Any, timeout: RpcTimeout): Future[T]
 

@@ -48,10 +48,10 @@ import org.apache.spark.util.{RpcUtils, Utils}
 
 /**
  * :: DeveloperApi ::
- * Holds all the runtime environment objects for a running Spark instance (either master or worker),
- * including the serializer, RpcEnv, block manager, map output tracker, etc. Currently
- * Spark code finds the SparkEnv through a global variable, so all the threads can access the same
- * SparkEnv. It can be accessed by SparkEnv.get (e.g. after creating a SparkContext).
+ * 保存正在运行的Spark实例（master或worker实例）的所有运行时环境对象，
+ * 包括序列化程序，RpcEnv，块管理器，映射输出跟踪器等。
+  * 当前，Spark代码通过全局变量查找SparkEnv，因此所有线程都可以访问相同的SparkEnv。
+  * 可以通过SparkEnv.get访问它（例如，在创建SparkContext之后）。
  */
 @DeveloperApi
 class SparkEnv (
@@ -234,6 +234,10 @@ object SparkEnv extends Logging {
     if (isDriver) {
       assert(listenerBus != null, "Attempted to create driver SparkEnv with null listener bus!")
     }
+
+    /**
+      * 安全管理器
+      */
     val authSecretFileConf = if (isDriver) AUTH_SECRET_FILE_DRIVER else AUTH_SECRET_FILE_EXECUTOR
     val securityManager = new SecurityManager(conf, ioEncryptionKey, authSecretFileConf)
     if (isDriver) {
@@ -247,6 +251,10 @@ object SparkEnv extends Logging {
       }
     }
 
+    /**
+      * RPC环境
+      * 如果为Drivre名称为 sparkDriver， 否则为sparkExecutor
+      */
     val systemName = if (isDriver) driverSystemName else executorSystemName
     val rpcEnv = RpcEnv.create(systemName, bindAddress, advertiseAddress, port.getOrElse(-1), conf,
       securityManager, numUsableCores, !isDriver)

@@ -38,7 +38,7 @@ import org.apache.spark.io.CompressionCodec
 import org.apache.spark.util.{JsonProtocol, Utils}
 
 /**
- * A SparkListener that logs events to persistent storage.
+ * 一个将事件记录到持久性存储中的SparkListener。
  *
  * Event logging is specified by the following configurable parameters:
  *   spark.eventLog.enabled - Whether event logging is enabled.

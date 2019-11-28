@@ -23,16 +23,15 @@ import org.apache.spark.status.AppStatusStore
 import org.apache.spark.status.api.v1.StageStatus
 
 /**
- * Low-level status reporting APIs for monitoring job and stage progress.
+ * 用于监视作业和阶段进度的低级状态报告API。
  *
- * These APIs intentionally provide very weak consistency semantics; consumers of these APIs should
- * be prepared to handle empty / missing information.  For example, a job's stage ids may be known
- * but the status API may not have any information about the details of those stages, so
- * `getStageInfo` could potentially return `None` for a valid stage id.
+ * T这些API有意提供非常弱的一致性语义；consumers of these APIs should
+ * 准备处理空的/丢失的信息。
+  * 例如，一个工作的阶段ID可能是已知的，但是状态API可能没有关于那些阶段的详细信息的任何信息，
+  * 因此getStageInfo可能会为有效的阶段ID返回None。
  *
- * To limit memory usage, these APIs only provide information on recent jobs / stages.  These APIs
- * will provide information for the last `spark.ui.retainedStages` stages and
- * `spark.ui.retainedJobs` jobs.
+ * 为了限制内存使用，这些API仅提供有关最近作业/阶段的信息。
+  * 这些API将为最后的“ spark.ui.retainedStages”阶段和“ spark.ui.retainedJobs”作业提供信息。
  *
  * NOTE: this class's constructor should be considered private and may be subject to change.
  */

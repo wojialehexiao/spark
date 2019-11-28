@@ -35,6 +35,7 @@ import org.apache.spark.util.Utils
  *   respecting the directory's hierarchy.
  *
  * Only streaming (openStream) is supported.
+  * 提供文件服务能力
  */
 private[netty] class NettyStreamManager(rpcEnv: NettyRpcEnv)
   extends StreamManager with RpcEnvFileServer {

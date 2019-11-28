@@ -48,16 +48,15 @@ import org.apache.spark.network.util.*;
 /**
  * Factory for creating {@link TransportClient}s by using createClient.
  *
- * The factory maintains a connection pool to other hosts and should return the same
- * TransportClient for the same remote host. It also shares a single worker thread pool for
- * all TransportClients.
+ * 工厂维护与其他主机的连接池，并应为同一远程主机返回相同的TransportClient。
+ * 它还为所有TransportClient共享一个工作线程池。
  *
  * TransportClients will be reused whenever possible. Prior to completing the creation of a new
  * TransportClient, all given {@link TransportClientBootstrap}s will be run.
  */
 public class TransportClientFactory implements Closeable {
 
-  /** A simple data structure to track the pool of clients between two peer nodes. */
+  /** 一个简单的数据结构，用于跟踪两个对等节点之间的客户端池. */
   private static class ClientPool {
     TransportClient[] clients;
     Object[] locks;

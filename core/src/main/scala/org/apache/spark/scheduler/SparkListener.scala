@@ -208,10 +208,10 @@ case class SparkListenerApplicationEnd(time: Long) extends SparkListenerEvent
 case class SparkListenerLogStart(sparkVersion: String) extends SparkListenerEvent
 
 /**
- * Interface for listening to events from the Spark scheduler. Most applications should probably
- * extend SparkListener or SparkFirehoseListener directly, rather than implementing this class.
+ * 用于监听来自Spark调度程序的事件的接口。
+  * 大多数应用程序可能应该直接扩展SparkListener或SparkFirehoseListener，而不是实现此类.
  *
- * Note that this is an internal interface which might change in different Spark releases.
+ * 请注意，这是一个内部接口，在不同的Spark版本中可能会更改。
  */
 private[spark] trait SparkListenerInterface {
 

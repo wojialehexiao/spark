@@ -26,16 +26,19 @@ private[spark] trait RpcCallContext {
   /**
    * Reply a message to the sender. If the sender is [[RpcEndpoint]], its `RpcEndpoint.receive`
    * will be called.
+    * 向发送者回复消息
    */
   def reply(response: Any): Unit
 
   /**
    * Report a failure to the sender.
+    * 向发送者回复失败消息
    */
   def sendFailure(e: Throwable): Unit
 
   /**
    * The sender of this message.
+    * 获取发送者地址
    */
   def senderAddress: RpcAddress
 }

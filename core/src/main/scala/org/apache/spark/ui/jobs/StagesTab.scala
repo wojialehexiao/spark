@@ -25,7 +25,7 @@ import org.apache.spark.status.AppStatusStore
 import org.apache.spark.status.api.v1.StageStatus
 import org.apache.spark.ui.{SparkUI, SparkUITab}
 
-/** Web UI showing progress status of all stages in the given SparkContext. */
+/** Web UI，显示给定SparkContext中所有阶段的进度状态。 */
 private[ui] class StagesTab(val parent: SparkUI, val store: AppStatusStore)
   extends SparkUITab(parent, "stages") {
 

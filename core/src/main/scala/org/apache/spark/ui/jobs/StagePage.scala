@@ -35,7 +35,7 @@ import org.apache.spark.status.api.v1._
 import org.apache.spark.ui._
 import org.apache.spark.util.Utils
 
-/** Page showing statistics and task list for a given stage */
+/** 显示给定阶段的统计信息和任务列表的页面 */
 private[ui] class StagePage(parent: StagesTab, store: AppStatusStore) extends WebUIPage("stage") {
   import ApiHelper._
 

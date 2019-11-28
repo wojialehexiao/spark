@@ -18,49 +18,73 @@
 package org.apache.spark.rpc.netty
 
 import javax.annotation.concurrent.GuardedBy
-
-import scala.util.control.NonFatal
-
 import org.apache.spark.SparkException
 import org.apache.spark.internal.Logging
 import org.apache.spark.rpc.{RpcAddress, RpcEndpoint, ThreadSafeRpcEndpoint}
 
+import scala.util.control.NonFatal
+
 
 private[netty] sealed trait InboxMessage
 
+/**
+  * 处理此类型的消息后，不需要向客户端回复消息
+  *
+  * @param senderAddress
+  * @param content
+  */
 private[netty] case class OneWayMessage(
-    senderAddress: RpcAddress,
-    content: Any) extends InboxMessage
+                                         senderAddress: RpcAddress,
+                                         content: Any) extends InboxMessage
 
+
+/**
+  * 处理此类型的消息后，需要向客户端回复消息
+  *
+  * @param senderAddress
+  * @param content
+  * @param context
+  */
 private[netty] case class RpcMessage(
-    senderAddress: RpcAddress,
-    content: Any,
-    context: NettyRpcCallContext) extends InboxMessage
+                                      senderAddress: RpcAddress,
+                                      content: Any,
+                                      context: NettyRpcCallContext) extends InboxMessage
 
+/**
+  * 用于InBox实例化后，在通知与此Inbox相关联的EndPoint启动
+  */
 private[netty] case object OnStart extends InboxMessage
 
+/**
+  * 用于InBox停止后，在通知与此Inbox相关联的EndPoint停止
+  */
 private[netty] case object OnStop extends InboxMessage
 
-/** A message to tell all endpoints that a remote process has connected. */
+/** 一条消息，告诉所有端点远程进程已连接。 */
 private[netty] case class RemoteProcessConnected(remoteAddress: RpcAddress) extends InboxMessage
 
-/** A message to tell all endpoints that a remote process has disconnected. */
+/** 一条消息，告诉所有端点远程进程已断开连接。 */
 private[netty] case class RemoteProcessDisconnected(remoteAddress: RpcAddress) extends InboxMessage
 
-/** A message to tell all endpoints that a network error has happened. */
+/** 一条消息，告诉所有端点发生了网络错误。 */
 private[netty] case class RemoteProcessConnectionError(cause: Throwable, remoteAddress: RpcAddress)
   extends InboxMessage
 
 /**
- * An inbox that stores messages for an [[RpcEndpoint]] and posts messages to it thread-safely.
- */
+  * An inbox that stores messages for an [[RpcEndpoint]] and posts messages to it thread-safely.
+  *
+  * 端点内的盒子，每个RpcEndpoint都有一个对应的盒子，里面存储了InboxMessage消息列表，并由RpcEndPoint异步处理这些消息
+  */
 private[netty] class Inbox(
-    val endpointRef: NettyRpcEndpointRef,
-    val endpoint: RpcEndpoint)
+                            val endpointRef: NettyRpcEndpointRef,
+                            val endpoint: RpcEndpoint)
   extends Logging {
 
-  inbox =>  // Give this an alias so we can use it more clearly in closures.
+  inbox => // Give this an alias so we can use it more clearly in closures.
 
+  /**
+    * 消息列表，用于缓存需要由对应RpcEndpoint处理的消息，即与Inbox在同一EndpointData中的RpcEndpoint。
+    */
   @GuardedBy("this")
   protected val messages = new java.util.LinkedList[InboxMessage]()
 
@@ -68,22 +92,26 @@ private[netty] class Inbox(
   @GuardedBy("this")
   private var stopped = false
 
-  /** Allow multiple threads to process messages at the same time. */
+  /** 允许多个线程同时处理消息。 */
   @GuardedBy("this")
   private var enableConcurrent = false
 
-  /** The number of threads processing messages for this inbox. */
+  /** 处理此收件箱消息的线程数。 */
   @GuardedBy("this")
   private var numActiveThreads = 0
 
   // OnStart should be the first message to process
+  /**
+    * 往自身放入OnStart消息
+    */
   inbox.synchronized {
     messages.add(OnStart)
   }
 
   /**
-   * Process stored messages.
-   */
+    * Process stored messages.
+    *
+    */
   def process(dispatcher: Dispatcher): Unit = {
     var message: InboxMessage = null
     inbox.synchronized {
@@ -129,7 +157,9 @@ private[netty] class Inbox(
             }
 
           case OnStop =>
-            val activeThreads = inbox.synchronized { inbox.numActiveThreads }
+            val activeThreads = inbox.synchronized {
+              inbox.numActiveThreads
+            }
             assert(activeThreads == 1,
               s"There should be only a single active thread but found $activeThreads threads.")
             dispatcher.removeRpcEndpointRef(endpoint)
@@ -188,19 +218,21 @@ private[netty] class Inbox(
     }
   }
 
-  def isEmpty: Boolean = inbox.synchronized { messages.isEmpty }
+  def isEmpty: Boolean = inbox.synchronized {
+    messages.isEmpty
+  }
 
   /**
-   * Called when we are dropping a message. Test cases override this to test message dropping.
-   * Exposed for testing.
-   */
+    * Called when we are dropping a message. Test cases override this to test message dropping.
+    * Exposed for testing.
+    */
   protected def onDrop(message: InboxMessage): Unit = {
     logWarning(s"Drop $message because $endpointRef is stopped")
   }
 
   /**
-   * Calls action closure, and calls the endpoint's onError function in the case of exceptions.
-   */
+    * Calls action closure, and calls the endpoint's onError function in the case of exceptions.
+    */
   private def safelyCall(endpoint: RpcEndpoint)(action: => Unit): Unit = {
     try action catch {
       case NonFatal(e) =>

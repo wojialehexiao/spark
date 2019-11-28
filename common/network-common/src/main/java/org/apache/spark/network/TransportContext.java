@@ -134,9 +134,8 @@ public class TransportContext implements Closeable {
   }
 
   /**
-   * Initializes a ClientFactory which runs the given TransportClientBootstraps prior to returning
-   * a new Client. Bootstraps will be executed synchronously, and must run successfully in order
-   * to create a Client.
+   * 初始化运行给定TransportClientBootstraps的ClientFactory，然后返回新的Client。
+   * BootStrap将同步执行，并且必须成功运行才能创建客户端。
    */
   public TransportClientFactory createClientFactory(List<TransportClientBootstrap> bootstraps) {
     return new TransportClientFactory(this, bootstraps);
@@ -146,7 +145,7 @@ public class TransportContext implements Closeable {
     return createClientFactory(new ArrayList<>());
   }
 
-  /** Create a server which will attempt to bind to a specific port. */
+  /** 创建一个将尝试绑定到特定端口的服务器。 */
   public TransportServer createServer(int port, List<TransportServerBootstrap> bootstraps) {
     return new TransportServer(this, null, port, rpcHandler, bootstraps);
   }

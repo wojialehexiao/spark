@@ -31,7 +31,7 @@ import org.apache.spark.storage.RDDBlockId
 import org.apache.spark.util.Clock
 
 /**
- * A monitor for executor activity, used by ExecutorAllocationManager to detect idle executors.
+ * ExecutorAllocationManager使用它来监视执行程序活动，以检测空闲的执行程序。
  */
 private[spark] class ExecutorMonitor(
     conf: SparkConf,

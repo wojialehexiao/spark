@@ -25,7 +25,7 @@ import org.apache.spark.scheduler.SchedulingMode
 import org.apache.spark.status.AppStatusStore
 import org.apache.spark.ui._
 
-/** Web UI showing progress status of all jobs in the given SparkContext. */
+/** Web UI，显示给定SparkContext中所有job的进度状态。 */
 private[ui] class JobsTab(parent: SparkUI, store: AppStatusStore)
   extends SparkUITab(parent, "jobs") {
 
