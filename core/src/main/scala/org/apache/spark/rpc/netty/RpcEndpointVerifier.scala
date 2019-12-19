@@ -23,6 +23,7 @@ import org.apache.spark.rpc.{RpcCallContext, RpcEndpoint, RpcEnv}
  * An [[RpcEndpoint]] for remote [[RpcEnv]]s to query if an `RpcEndpoint` exists.
  *
  * This is used when setting up a remote endpoint reference.
+  * 用于校验指定名称的RpcEndpoint是否存在
  */
 private[netty] class RpcEndpointVerifier(override val rpcEnv: RpcEnv, dispatcher: Dispatcher)
   extends RpcEndpoint {

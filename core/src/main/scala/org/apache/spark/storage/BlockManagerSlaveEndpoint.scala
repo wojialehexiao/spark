@@ -17,23 +17,27 @@
 
 package org.apache.spark.storage
 
-import scala.concurrent.{ExecutionContext, Future}
-
-import org.apache.spark.{MapOutputTracker, SparkEnv}
 import org.apache.spark.internal.Logging
 import org.apache.spark.rpc.{RpcCallContext, RpcEnv, ThreadSafeRpcEndpoint}
 import org.apache.spark.storage.BlockManagerMessages._
 import org.apache.spark.util.{ThreadUtils, Utils}
+import org.apache.spark.{MapOutputTracker, SparkEnv}
+
+import scala.concurrent.{ExecutionContext, Future}
 
 /**
- * An RpcEndpoint to take commands from the master to execute options. For example,
- * this is used to remove blocks from the slave's BlockManager.
- */
+  * An RpcEndpoint to take commands from the master to execute options. For example,
+  * this is used to remove blocks from the slave's BlockManager.
+  *
+  * BLockManagerSlaveEndpoint
+  *
+  * 用于接收BlockManagerMasterEndpoint的命令并执行响应的操作
+  */
 private[storage]
 class BlockManagerSlaveEndpoint(
-    override val rpcEnv: RpcEnv,
-    blockManager: BlockManager,
-    mapOutputTracker: MapOutputTracker)
+                                 override val rpcEnv: RpcEnv,
+                                 blockManager: BlockManager,
+                                 mapOutputTracker: MapOutputTracker)
   extends ThreadSafeRpcEndpoint with Logging {
 
   private val asyncThreadPool =

@@ -18,9 +18,14 @@
 package org.apache.spark.memory;
 
 import org.apache.spark.annotation.Private;
-
+/**
+ * 内存模式
+ *  堆内存
+ *  堆外内存
+ */
 @Private
 public enum MemoryMode {
   ON_HEAP,
   OFF_HEAP
 }
+

@@ -232,6 +232,7 @@ private[netty] class Dispatcher(nettyEnv: NettyRpcEnv, numUsableCores: Int) exte
 
   /**
    * Return if the endpoint exists
+    * 校验名称是否存在
    */
   def verify(name: String): Boolean = {
     endpoints.containsKey(name)

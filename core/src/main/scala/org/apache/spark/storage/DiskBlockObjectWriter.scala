@@ -27,35 +27,43 @@ import org.apache.spark.util.Utils
 import org.apache.spark.util.collection.PairsWriter
 
 /**
- * A class for writing JVM objects directly to a file on disk. This class allows data to be appended
- * to an existing block. For efficiency, it retains the underlying file channel across
- * multiple commits. This channel is kept open until close() is called. In case of faults,
- * callers should instead close with revertPartialWritesAndClose() to atomically revert the
- * uncommitted partial writes.
- *
- * This class does not support concurrent writes. Also, once the writer has been opened it cannot be
- * reopened again.
- */
+  * A class for writing JVM objects directly to a file on disk. This class allows data to be appended
+  * to an existing block. For efficiency, it retains the underlying file channel across
+  * multiple commits. This channel is kept open until close() is called. In case of faults,
+  * callers should instead close with revertPartialWritesAndClose() to atomically revert the
+  * uncommitted partial writes.
+  *
+  * This class does not support concurrent writes. Also, once the writer has been opened it cannot be
+  * reopened again.
+  *
+  * 将map的中间输出写入磁盘。
+  * 将JVM中的对象直接写入到磁盘，它允许将数据追加到现有Block。
+  * 为了提高效率，DiskBlockObjectWriter保留了跨多个提交的底层文件通道
+  */
 private[spark] class DiskBlockObjectWriter(
-    val file: File,
-    serializerManager: SerializerManager,
-    serializerInstance: SerializerInstance,
-    bufferSize: Int,
-    syncWrites: Boolean,
-    // These write metrics concurrently shared with other active DiskBlockObjectWriters who
-    // are themselves performing writes. All updates must be relative.
-    writeMetrics: ShuffleWriteMetricsReporter,
-    val blockId: BlockId = null)
-  extends OutputStream
-  with Logging
-  with PairsWriter {
+                                            //要写入的文件
+                                            val file: File,
+                                            //
+                                            serializerManager: SerializerManager,
+                                            //
+                                            serializerInstance: SerializerInstance,
+                                            //缓冲大小
+                                            bufferSize: Int,
+                                            //是否同步写
+                                            syncWrites: Boolean,
+                                            // These write metrics concurrently shared with other active DiskBlockObjectWriters who
+                                            // are themselves performing writes. All updates must be relative.
+                                            //对shuffle中间结果写入磁盘的度量
+                                            writeMetrics: ShuffleWriteMetricsReporter,
+                                            //
+                                            val blockId: BlockId = null) extends OutputStream with Logging with PairsWriter {
 
   /**
-   * Guards against close calls, e.g. from a wrapping stream.
-   * Call manualClose to close the stream that was extended by this trait.
-   * Commit uses this trait to close object streams without paying the
-   * cost of closing and opening the underlying file.
-   */
+    * Guards against close calls, e.g. from a wrapping stream.
+    * Call manualClose to close the stream that was extended by this trait.
+    * Commit uses this trait to close object streams without paying the
+    * cost of closing and opening the underlying file.
+    */
   private trait ManualCloseOutputStream extends OutputStream {
     abstract override def close(): Unit = {
       flush()
@@ -66,49 +74,75 @@ private[spark] class DiskBlockObjectWriter(
     }
   }
 
-  /** The file channel, used for repositioning / truncating the file. */
+  /**
+    * The file channel, used for repositioning / truncating the file.
+    * FileChannel
+    * */
   private var channel: FileChannel = null
+
+
   private var mcs: ManualCloseOutputStream = null
   private var bs: OutputStream = null
   private var fos: FileOutputStream = null
   private var ts: TimeTrackingOutputStream = null
   private var objOut: SerializationStream = null
+
+  /**
+    * 是否已经初始化
+    */
   private var initialized = false
+
+  /**
+    * 是否已经打开流
+    */
   private var streamOpen = false
+
+  /**
+    * 是否已经关闭
+    */
   private var hasBeenClosed = false
 
   /**
-   * Cursors used to represent positions in the file.
-   *
-   * xxxxxxxxxx|----------|-----|
-   *           ^          ^     ^
-   *           |          |    channel.position()
-   *           |        reportedPosition
-   *         committedPosition
-   *
-   * reportedPosition: Position at the time of the last update to the write metrics.
-   * committedPosition: Offset after last committed write.
-   * -----: Current writes to the underlying file.
-   * xxxxx: Committed contents of the file.
-   */
+    * Cursors used to represent positions in the file.
+    *
+    * xxxxxxxxxx|----------|-----|
+    * ^          ^     ^
+    * |          |    channel.position()
+    * |        reportedPosition
+    * committedPosition
+    *
+    * reportedPosition: Position at the time of the last update to the write metrics.
+    * committedPosition: Offset after last committed write.
+    * -----: Current writes to the underlying file.
+    * xxxxx: Committed contents of the file.
+    *
+    * 提交文件的位置
+    */
   private var committedPosition = file.length()
+
+  /**
+    * 提交给度量系统的文件位置
+    */
   private var reportedPosition = committedPosition
 
   /**
-   * Keep track of number of records written and also use this to periodically
-   * output bytes written since the latter is expensive to do for each record.
-   * And we reset it after every commitAndGet called.
-   */
+    * Keep track of number of records written and also use this to periodically
+    * output bytes written since the latter is expensive to do for each record.
+    * And we reset it after every commitAndGet called.
+    * 已经写的记录数
+    */
   private var numRecordsWritten = 0
 
   private def initialize(): Unit = {
     fos = new FileOutputStream(file, true)
     channel = fos.getChannel()
     ts = new TimeTrackingOutputStream(writeMetrics, fos)
-    class ManualCloseBufferedOutputStream
-      extends BufferedOutputStream(ts, bufferSize) with ManualCloseOutputStream
+
+    class ManualCloseBufferedOutputStream extends BufferedOutputStream(ts, bufferSize) with ManualCloseOutputStream
+
     mcs = new ManualCloseBufferedOutputStream
   }
+
 
   def open(): DiskBlockObjectWriter = {
     if (hasBeenClosed) {
@@ -126,9 +160,9 @@ private[spark] class DiskBlockObjectWriter(
   }
 
   /**
-   * Close and cleanup all resources.
-   * Should call after committing or reverting partial writes.
-   */
+    * Close and cleanup all resources.
+    * Should call after committing or reverting partial writes.
+    */
   private def closeResources(): Unit = {
     if (initialized) {
       Utils.tryWithSafeFinally {
@@ -148,8 +182,8 @@ private[spark] class DiskBlockObjectWriter(
   }
 
   /**
-   * Commits any remaining partial writes and closes resources.
-   */
+    * Commits any remaining partial writes and closes resources.
+    */
   override def close(): Unit = {
     if (initialized) {
       Utils.tryWithSafeFinally {
@@ -161,11 +195,11 @@ private[spark] class DiskBlockObjectWriter(
   }
 
   /**
-   * Flush the partial writes and commit them as a single atomic block.
-   * A commit may write additional bytes to frame the atomic block.
-   *
-   * @return file segment with previous offset and length committed on this call.
-   */
+    * Flush the partial writes and commit them as a single atomic block.
+    * A commit may write additional bytes to frame the atomic block.
+    *
+    * @return file segment with previous offset and length committed on this call.
+    */
   def commitAndGet(): FileSegment = {
     if (streamOpen) {
       // NOTE: Because Kryo doesn't flush the underlying stream we explicitly flush both the
@@ -197,12 +231,12 @@ private[spark] class DiskBlockObjectWriter(
 
 
   /**
-   * Reverts writes that haven't been committed yet. Callers should invoke this function
-   * when there are runtime exceptions. This method will not throw, though it may be
-   * unsuccessful in truncating written data.
-   *
-   * @return the file that this DiskBlockObjectWriter wrote to.
-   */
+    * Reverts writes that haven't been committed yet. Callers should invoke this function
+    * when there are runtime exceptions. This method will not throw, though it may be
+    * unsuccessful in truncating written data.
+    *
+    * @return the file that this DiskBlockObjectWriter wrote to.
+    */
   def revertPartialWritesAndClose(): File = {
     // Discard current writes. We do this by flushing the outstanding writes and then
     // truncating the file to its initial position.
@@ -238,8 +272,8 @@ private[spark] class DiskBlockObjectWriter(
   }
 
   /**
-   * Writes a key-value pair.
-   */
+    * Writes a key-value pair.
+    */
   override def write(key: Any, value: Any): Unit = {
     if (!streamOpen) {
       open()
@@ -261,8 +295,9 @@ private[spark] class DiskBlockObjectWriter(
   }
 
   /**
-   * Notify the writer that a record worth of bytes has been written with OutputStream#write.
-   */
+    * Notify the writer that a record worth of bytes has been written with OutputStream#write.
+    *
+    */
   def recordWritten(): Unit = {
     numRecordsWritten += 1
     writeMetrics.incRecordsWritten(1)
@@ -273,9 +308,9 @@ private[spark] class DiskBlockObjectWriter(
   }
 
   /**
-   * Report the number of bytes written in this writer's shuffle write metrics.
-   * Note that this is only valid before the underlying streams are closed.
-   */
+    * Report the number of bytes written in this writer's shuffle write metrics.
+    * Note that this is only valid before the underlying streams are closed.
+    */
   private def updateBytesWritten(): Unit = {
     val pos = channel.position()
     writeMetrics.incBytesWritten(pos - reportedPosition)

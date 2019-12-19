@@ -108,13 +108,18 @@ private[netty] class NettyRpcEnv(
   @volatile private var fileDownloadFactory: TransportClientFactory = _
 
 
-
-
+  /**
+    * 用于处理请求超时的调度器
+    */
   val timeoutScheduler = ThreadUtils.newDaemonSingleThreadScheduledExecutor("netty-rpc-env-timeout")
 
   // Because TransportClientFactory.createClient is blocking, we need to run it in this thread pool
   // to implement non-blocking send/ask.
   // TODO: a non-blocking TransportClientFactory.createClient in future
+  /**
+    * 因为TransportClientFactory.createClient是阻塞，clientConnectionExecutor是一个用于处理TransportClientFactory.createClient方法调用的线程池
+    * 这个线程池的大小默认是64， 可以通过 spark.rpc.connect.threads 配置
+    */
   private[netty] val clientConnectionExecutor = ThreadUtils.newDaemonCachedThreadPool(
     "netty-rpc-connection",
     conf.get(RPC_CONNECT_THREADS))
@@ -129,6 +134,7 @@ private[netty] class NettyRpcEnv(
   /**
    * A map for [[RpcAddress]] and [[Outbox]]. When we are connecting to a remote [[RpcAddress]],
    * we just put messages to its [[Outbox]] to implement a non-blocking `send` method.
+    * RpcAddress与Outbox的映射关系的缓存。每次向远端发送请求时，此请求消息首先仿佛此远端地址对应的Outbox中，然后使用异步线程异步发送
    */
   private val outboxes = new ConcurrentHashMap[RpcAddress, Outbox]()
 
@@ -163,6 +169,7 @@ private[netty] class NettyRpcEnv(
     if (server != null) RpcAddress(host, server.getPort()) else null
   }
 
+
   override def setupEndpoint(name: String, endpoint: RpcEndpoint): RpcEndpointRef = {
     dispatcher.registerRpcEndpoint(name, endpoint)
   }
@@ -187,9 +194,13 @@ private[netty] class NettyRpcEnv(
   }
 
   private def postToOutbox(receiver: NettyRpcEndpointRef, message: OutboxMessage): Unit = {
+
+    //如果client不为空，调用sendWith
     if (receiver.client != null) {
       message.sendWith(receiver.client)
     } else {
+
+      //获取对应的Outbox，如果不存在，新建Outbox， 方法入到缓存中
       require(receiver.address != null,
         "Cannot send message to client endpoint with no listen address.")
       val targetOutbox = {
@@ -206,6 +217,8 @@ private[netty] class NettyRpcEnv(
           outbox
         }
       }
+
+      //如果已经停止，则删除缓存
       if (stopped.get) {
         // It's possible that we put `targetOutbox` after stopping. So we need to clean it.
         outboxes.remove(receiver.address)
@@ -215,6 +228,7 @@ private[netty] class NettyRpcEnv(
       }
     }
   }
+
 
   private[netty] def send(message: RequestMessage): Unit = {
     val remoteAddr = message.receiver.address
@@ -262,6 +276,11 @@ private[netty] class NettyRpcEnv(
     }
 
     try {
+
+      /**
+        * 如果请求消息的接收者的地址与当前的地址相同，则说明处理请求的RpcEndpoint位于笨的的NettyRpcEnv中， 那么新建Promise对象。
+        * 并且给Promise的future设置完成时的回调函数。发送消息最终通过调用本地的Dispatcher的postLocalMessage方法
+        */
       if (remoteAddr == address) {
         val p = Promise[Any]()
         p.future.onComplete {
@@ -270,6 +289,13 @@ private[netty] class NettyRpcEnv(
         }(ThreadUtils.sameThread)
         dispatcher.postLocalMessage(message, p)
       } else {
+
+        /**
+          * 如果请求消息的接收者的地址与当的NettyRpcEnv的地址不同，则说明处理请求的RpcEndpoint位于其他的节点的NettyRpcEnv中，
+          * 那么将message序列化， 并与onFailure、onSuccess方法一道封装为RpcOutboxMessage类型的消息。
+          * 最后调用postToOutbox方法将消息投递出去
+          */
+
         val rpcMessage = RpcOutboxMessage(message.serialize(this),
           onFailure,
           (client, response) => onSuccess(deserialize[Any](client, response)))
@@ -281,6 +307,11 @@ private[netty] class NettyRpcEnv(
         }(ThreadUtils.sameThread)
       }
 
+      /**
+        * 使用timeoutScheduler设置一个定时器，用于超时处理。
+        * 此定时器在等待指定的超时时间后抛出TimeoutException。如果在超时时间内处理完成。
+        * 再回调用timeoutScheduler的cancel方法取消此超时定时器
+        */
       val timeoutCancelable = timeoutScheduler.schedule(new Runnable {
         override def run(): Unit = {
           onFailure(new TimeoutException(s"Cannot receive any reply from ${remoteAddr} " +
@@ -290,6 +321,8 @@ private[netty] class NettyRpcEnv(
       promise.future.onComplete { v =>
         timeoutCancelable.cancel(true)
       }(ThreadUtils.sameThread)
+
+
     } catch {
       case NonFatal(e) =>
         onFailure(e)
@@ -327,6 +360,11 @@ private[netty] class NettyRpcEnv(
     }
   }
 
+  /**
+    * 获取RpcEndpoint的引用对象
+    * @param endpoint
+    * @return
+    */
   override def endpointRef(endpoint: RpcEndpoint): RpcEndpointRef = {
     dispatcher.getRpcEndpointRef(endpoint)
   }
@@ -563,6 +601,7 @@ private[rpc] class NettyRpcEnvFactory extends RpcEnvFactory with Logging {
  * a client connection, since the process hosting the endpoint is not listening for incoming
  * connections. These refs should not be shared with 3rd parties, since they will not be able to
  * send messages to the endpoint.
+  * NettyRpcEnv中要向RpcEndpoint发送请求，首先要持有RpcEndpoint的引用对象NettyRpcEndpointRef
  *
  * @param conf Spark configuration.
  * @param endpointAddress The address where the endpoint is listening.
@@ -573,8 +612,15 @@ private[netty] class NettyRpcEndpointRef(
     private val endpointAddress: RpcEndpointAddress,
     @transient @volatile private var nettyEnv: NettyRpcEnv) extends RpcEndpointRef(conf) {
 
+  /**
+    * 利用TransportClient向远端的RpcEndpoint发送消息
+    */
   @transient @volatile var client: TransportClient = _
 
+  /**
+    * 远程RpcEndpoint的地址
+    * @return
+    */
   override def address: RpcAddress =
     if (endpointAddress.rpcAddress != null) endpointAddress.rpcAddress else null
 
@@ -588,6 +634,10 @@ private[netty] class NettyRpcEndpointRef(
     out.defaultWriteObject()
   }
 
+  /**
+    * RpcEndpoint的名称
+    * @return
+    */
   override def name: String = endpointAddress.name
 
   override def askAbortable[T: ClassTag](
@@ -595,10 +645,21 @@ private[netty] class NettyRpcEndpointRef(
     nettyEnv.askAbortable(new RequestMessage(nettyEnv.address, this, message), timeout)
   }
 
+  /**
+    * 首先将message封装为RequestMessage， 然后调用NettyRpcEnv的ask方法
+    * @param message
+    * @param timeout
+    * @tparam T
+    * @return
+    */
   override def ask[T: ClassTag](message: Any, timeout: RpcTimeout): Future[T] = {
     askAbortable(message, timeout).toFuture
   }
 
+  /**
+    * 首先将message封装为RequestMessage， 然后调用NettyRpcEnv的send方法
+    * @param message
+    */
   override def send(message: Any): Unit = {
     require(message != null, "Message is null")
     nettyEnv.send(new RequestMessage(nettyEnv.address, this, message))

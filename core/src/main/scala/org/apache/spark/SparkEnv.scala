@@ -70,13 +70,28 @@ class SparkEnv (
     val outputCommitCoordinator: OutputCommitCoordinator,
     val conf: SparkConf) extends Logging {
 
+  /**
+    *
+    */
   @volatile private[spark] var isStopped = false
+
+  /**
+    * 所有Python实现的worker缓存
+    */
   private val pythonWorkers = mutable.HashMap[(String, Map[String, String]), PythonWorkerFactory]()
 
   // A general, soft-reference map for metadata needed during HadoopRDD split computation
   // (e.g., HadoopFileRDD uses this to cache JobConfs and InputFormats).
+  /**
+    * HadoopRDD进行任务切分时所需的元数据软引用。
+    * 例如，HadoopFileRDD将使用hadoopJobMetadata缓存JobConf和InputFormat
+    */
   private[spark] val hadoopJobMetadata = new MapMaker().softValues().makeMap[String, Any]()
 
+
+  /**
+    * driver的临时目录。
+    */
   private[spark] var driverTmpDir: Option[String] = None
 
   private[spark] def stop(): Unit = {
@@ -259,6 +274,7 @@ object SparkEnv extends Logging {
     val rpcEnv = RpcEnv.create(systemName, bindAddress, advertiseAddress, port.getOrElse(-1), conf,
       securityManager, numUsableCores, !isDriver)
 
+
     // Figure out which port RpcEnv actually bound to in case the original port is 0 or occupied.
     if (isDriver) {
       conf.set(DRIVER_PORT, rpcEnv.address.port)
@@ -290,6 +306,9 @@ object SparkEnv extends Logging {
       instantiateClass[T](conf.get(propertyName))
     }
 
+    /**
+      * 序列化管理器
+      */
     val serializer = instantiateClassFromConf[Serializer](SERIALIZER)
     logDebug(s"Using serializer: ${serializer.getClass}")
 
@@ -297,19 +316,40 @@ object SparkEnv extends Logging {
 
     val closureSerializer = new JavaSerializer(conf)
 
+    /**
+      * 用于注册RpcEndpoint或者查找RpcEndpoint的方法
+      * @param name
+      * @param endpointCreator
+      * @return
+      */
     def registerOrLookupEndpoint(
         name: String, endpointCreator: => RpcEndpoint):
       RpcEndpointRef = {
+      //如果当前实例是Driver，则调用代码setupEndpoint方法向Dispatcher注册Endpoint
       if (isDriver) {
         logInfo("Registering " + name)
         rpcEnv.setupEndpoint(name, endpointCreator)
+
+        //如果是Executor，则调用工具类RpcUtils的makeDriverRef方法向远端的NettyRpcEnv询问获取相关的RpcEndpointRef
       } else {
         RpcUtils.makeDriverRef(name, conf, rpcEnv)
       }
     }
 
+    /**
+      * 广播管理器
+      */
     val broadcastManager = new BroadcastManager(isDriver, conf, securityManager)
 
+
+    /**
+      * map任务输出跟踪器
+      * 如果当前实例是Driver，则创建MapOutputTrackerMaster，然后创建MapOutputTrackerMasterEndpoint，
+      * 并注册到Dispatcher中， 名为MapOutputTracker
+      *
+      * 如果当前实例是Executor，则创建MapOutputTrackerWorker，
+      * 并从远端Driver实例的NettryRpcEnv的Dispatcher中查找MapOutputTrackerMasterEndpoint的引用
+      */
     val mapOutputTracker = if (isDriver) {
       new MapOutputTrackerMaster(conf, broadcastManager, isLocal)
     } else {
@@ -322,6 +362,10 @@ object SparkEnv extends Logging {
       new MapOutputTrackerMasterEndpoint(
         rpcEnv, mapOutputTracker.asInstanceOf[MapOutputTrackerMaster], conf))
 
+
+    /**
+      * 构建存储体系
+      */
     // Let the user specify short names for shuffle managers
     val shortShuffleMgrNames = Map(
       "sort" -> classOf[org.apache.spark.shuffle.sort.SortShuffleManager].getName,
@@ -329,10 +373,22 @@ object SparkEnv extends Logging {
     val shuffleMgrName = conf.get(config.SHUFFLE_MANAGER)
     val shuffleMgrClass =
       shortShuffleMgrNames.getOrElse(shuffleMgrName.toLowerCase(Locale.ROOT), shuffleMgrName)
+    /**
+      * 根据配置获取ShuffleManager，其实总为 SortShuffleManager
+      */
     val shuffleManager = instantiateClass[ShuffleManager](shuffleMgrClass)
 
+
+    /**
+      *
+      */
     val memoryManager: MemoryManager = UnifiedMemoryManager(conf, numUsableCores)
 
+    /**
+      * 获取当前SparkEnv的块传输服务BlockTransferService对外提供的端口号。
+      * 如果当前为Driver，则从SparkConf中获取DRIVER_BLOCK_MANAGER_PORT指定的端口
+      * 如果当前为Master，则从SparkConf中获取BLOCK_MANAGER_PORT指定的端口
+      */
     val blockManagerPort = if (isDriver) {
       conf.get(DRIVER_BLOCK_MANAGER_PORT)
     } else {
@@ -379,15 +435,22 @@ object SparkEnv extends Logging {
       securityManager,
       externalShuffleClient)
 
+
+    /**
+      * 创建度量系统
+      */
     val metricsSystem = if (isDriver) {
       // Don't start metrics system right now for Driver.
       // We need to wait for the task scheduler to give us an app ID.
       // Then we can start the metrics system.
+      //当前实例为Driver，创建度量系统，并指定度量系统的名为driver。此时虽然创建了，但并未启动，
+      // 目的是等待SparkContext中的任务调度器TaskScheduler告诉度量系统应用程序的ID后启动
       MetricsSystem.createMetricsSystem(MetricsSystemInstances.DRIVER, conf, securityManager)
     } else {
       // We need to set the executor ID before the MetricsSystem is created because sources and
       // sinks specified in the metrics configuration file will want to incorporate this executor's
       // ID into the metrics they report.
+      //当前实例为Executor， 设置spark.executor.id属性为Executor的ID，然后启动度量系统
       conf.set(EXECUTOR_ID, executorId)
       val ms = MetricsSystem.createMetricsSystem(MetricsSystemInstances.EXECUTOR, conf,
         securityManager)
@@ -395,13 +458,39 @@ object SparkEnv extends Logging {
       ms
     }
 
+
+    /**
+      * 输出提交协调器
+      * 当Spark应用程序使用了Spark SQL（包括Hive）或者需要将任务输出保存到HDFS时，
+      * 就会用到输出提交协调器OutputCommitCoordinator， OutputCommitCoordinator将决定任务是否可以提交输出到HDFS
+      * 无论是Driver还是Executor，在SparkEnv中都包含了自组件OutputCommitCoordinator。
+      * 在Driver上注册了OutputCommitCoordinatorEndpoint，所有Executor上的OutputCommitCoordinator都是通过
+      * OutputCommitCoordinatorEndPoint的RpcEndpointRef来询问Driver上的OutputCommitCoordinator，是否能够输出提交到HDFS
+      */
+    /**
+      * 新建OutputCommitCoordinator实例
+      */
     val outputCommitCoordinator = mockOutputCommitCoordinator.getOrElse {
       new OutputCommitCoordinator(conf, isDriver)
     }
+
+    /**
+      * 如果当前实例是Driver，则创建OutputCommitCoordinatorEndpoint，并注册到Dispatcher中，名为OutputCommitCoordinator
+      * 如果当前应用程序是Executor，则从远端Driver实例的NettyRpcEnv的Dispatcher中查找OutputCommitCoordinatorEndpoint的引用
+      */
     val outputCommitCoordinatorRef = registerOrLookupEndpoint("OutputCommitCoordinator",
       new OutputCommitCoordinatorEndpoint(rpcEnv, outputCommitCoordinator))
+
+    /**
+      * 无论是Driver还是Executor，最后都有coordinatorRef持有OutputCommitCoordinatorEndpoint的引用
+      */
     outputCommitCoordinator.coordinatorRef = Some(outputCommitCoordinatorRef)
 
+
+
+    /**
+      * 构造SparkEnv
+      */
     val envInstance = new SparkEnv(
       executorId,
       rpcEnv,
@@ -421,6 +510,7 @@ object SparkEnv extends Logging {
     // Add a reference to tmp dir created by driver, we will delete this tmp dir when stop() is
     // called, and we only need to do it for driver. Because driver may run as a service, and if we
     // don't delete this tmp dir when sc is stopped, then will create too many tmp dirs.
+
     if (isDriver) {
       val sparkFilesDir = Utils.createTempDir(Utils.getLocalDir(conf), "userFiles").getAbsolutePath
       envInstance.driverTmpDir = Some(sparkFilesDir)

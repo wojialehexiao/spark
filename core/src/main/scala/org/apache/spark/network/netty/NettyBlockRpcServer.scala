@@ -19,9 +19,6 @@ package org.apache.spark.network.netty
 
 import java.nio.ByteBuffer
 
-import scala.collection.JavaConverters._
-import scala.reflect.ClassTag
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.network.BlockDataManager
 import org.apache.spark.network.buffer.NioManagedBuffer
@@ -31,38 +28,62 @@ import org.apache.spark.network.shuffle.protocol._
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.storage.{BlockId, ShuffleBlockId, StorageLevel}
 
+import scala.collection.JavaConverters._
+import scala.reflect.ClassTag
+
 /**
- * Serves requests to open blocks by simply registering one chunk per block requested.
- * Handles opening and uploading arbitrary BlockManager blocks.
- *
- * Opened blocks are registered with the "one-for-one" strategy, meaning each Transport-layer Chunk
- * is equivalent to one Spark-level shuffle block.
- */
+  * Serves requests to open blocks by simply registering one chunk per block requested.
+  * Handles opening and uploading arbitrary BlockManager blocks.
+  *
+  * Opened blocks are registered with the "one-for-one" strategy, meaning each Transport-layer Chunk
+  * is equivalent to one Spark-level shuffle block.
+  *
+  *
+  *
+  */
 class NettyBlockRpcServer(
-    appId: String,
-    serializer: Serializer,
-    blockManager: BlockDataManager)
+                           appId: String,
+                           serializer: Serializer,
+                           blockManager: BlockDataManager)
   extends RpcHandler with Logging {
 
+  /**
+    * 一对一的流服务
+    */
   private val streamManager = new OneForOneStreamManager()
 
   override def receive(
-      client: TransportClient,
-      rpcMessage: ByteBuffer,
-      responseContext: RpcResponseCallback): Unit = {
+                        client: TransportClient,
+                        rpcMessage: ByteBuffer,
+                        responseContext: RpcResponseCallback): Unit = {
+
+
+    //反序列化消息
     val message = BlockTransferMessage.Decoder.fromByteBuffer(rpcMessage)
     logTrace(s"Received request: $message")
 
     message match {
+
+        //打开（读取）Block
       case openBlocks: OpenBlocks =>
         val blocksNum = openBlocks.blockIds.length
+
+        //取出OpenBlocks消息携带的数组，调用BlockManager的getBlockData
+        //获取数组中每一个BlockId对应的Block
         val blocks = for (i <- (0 until blocksNum).view)
           yield blockManager.getBlockData(BlockId.apply(openBlocks.blockIds(i)))
+
+        //将ManagedBuffer序列注册到OneForOneStreamManager的stream缓存
         val streamId = streamManager.registerStream(appId, blocks.iterator.asJava,
           client.getChannel)
+
+        //响应客户端
         logTrace(s"Registered streamId $streamId with $blocksNum buffers")
         responseContext.onSuccess(new StreamHandle(streamId, blocksNum).toByteBuffer)
 
+
+
+      //获取shuffleBlock -- 待定
       case fetchShuffleBlocks: FetchShuffleBlocks =>
         val blocks = fetchShuffleBlocks.mapIds.zipWithIndex.flatMap { case (mapId, index) =>
           fetchShuffleBlocks.reduceIds.apply(index).map { reduceId =>
@@ -71,28 +92,42 @@ class NettyBlockRpcServer(
           }
         }
         val numBlockIds = fetchShuffleBlocks.reduceIds.map(_.length).sum
+
+
         val streamId = streamManager.registerStream(appId, blocks.iterator.asJava,
           client.getChannel)
+
         logTrace(s"Registered streamId $streamId with $numBlockIds buffers")
         responseContext.onSuccess(
           new StreamHandle(streamId, numBlockIds).toByteBuffer)
 
+
+      //上传Block
       case uploadBlock: UploadBlock =>
         // StorageLevel and ClassTag are serialized as bytes using our JavaSerializer.
+        // 对元数据进行反序列化，得到存储级别和类型标记
         val (level, classTag) = deserializeMetadata(uploadBlock.metadata)
+
+        //将Block的数据封装为NioManagedBuffer
         val data = new NioManagedBuffer(ByteBuffer.wrap(uploadBlock.blockData))
+
+        //获取BlockId
         val blockId = BlockId(uploadBlock.blockId)
         logDebug(s"Receiving replicated block $blockId with level ${level} " +
           s"from ${client.getSocketAddress}")
+
+        //放入本地存储体系
         blockManager.putBlockData(blockId, data, level, classTag)
+
+        //响应
         responseContext.onSuccess(ByteBuffer.allocate(0))
     }
   }
 
   override def receiveStream(
-      client: TransportClient,
-      messageHeader: ByteBuffer,
-      responseContext: RpcResponseCallback): StreamCallbackWithID = {
+                              client: TransportClient,
+                              messageHeader: ByteBuffer,
+                              responseContext: RpcResponseCallback): StreamCallbackWithID = {
     val message =
       BlockTransferMessage.Decoder.fromByteBuffer(messageHeader).asInstanceOf[UploadBlockStream]
     val (level, classTag) = deserializeMetadata(message.metadata)

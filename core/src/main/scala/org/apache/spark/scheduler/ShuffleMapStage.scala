@@ -17,53 +17,63 @@
 
 package org.apache.spark.scheduler
 
-import scala.collection.mutable.HashSet
-
-import org.apache.spark.{MapOutputTrackerMaster, ShuffleDependency}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.CallSite
+import org.apache.spark.{MapOutputTrackerMaster, ShuffleDependency}
+
+import scala.collection.mutable.HashSet
 
 /**
- * ShuffleMapStages are intermediate stages in the execution DAG that produce data for a shuffle.
- * They occur right before each shuffle operation, and might contain multiple pipelined operations
- * before that (e.g. map and filter). When executed, they save map output files that can later be
- * fetched by reduce tasks. The `shuffleDep` field describes the shuffle each stage is part of,
- * and variables like `outputLocs` and `numAvailableOutputs` track how many map outputs are ready.
- *
- * ShuffleMapStages can also be submitted independently as jobs with DAGScheduler.submitMapStage.
- * For such stages, the ActiveJobs that submitted them are tracked in `mapStageJobs`. Note that
- * there can be multiple ActiveJobs trying to compute the same shuffle map stage.
- */
+  * ShuffleMapStages are intermediate stages in the execution DAG that produce data for a shuffle.
+  * They occur right before each shuffle operation, and might contain multiple pipelined operations
+  * before that (e.g. map and filter). When executed, they save map output files that can later be
+  * fetched by reduce tasks. The `shuffleDep` field describes the shuffle each stage is part of,
+  * and variables like `outputLocs` and `numAvailableOutputs` track how many map outputs are ready.
+  *
+  * ShuffleMapStages can also be submitted independently as jobs with DAGScheduler.submitMapStage.
+  * For such stages, the ActiveJobs that submitted them are tracked in `mapStageJobs`. Note that
+  * there can be multiple ActiveJobs trying to compute the same shuffle map stage.
+  *
+  * ShuffleMapStage是DAG调度流程的中间Stage，他可以包括一到多个ShuffleMapTask，
+  * 这些ShuffleMapTask将生成用于Shuffle的数据。
+  * ShuffleMapStage一般是ResultStage或者其他ShuffleMapStage的前置Stage，ShuffleMapTask则通过Shuffle与下游Stage中的
+  * Task串联起来。ShuffleMapStage将对Shuffle的数据映射到下游的Stage的各个分区中。
+  */
 private[spark] class ShuffleMapStage(
-    id: Int,
-    rdd: RDD[_],
-    numTasks: Int,
-    parents: List[Stage],
-    firstJobId: Int,
-    callSite: CallSite,
-    val shuffleDep: ShuffleDependency[_, _, _],
-    mapOutputTrackerMaster: MapOutputTrackerMaster)
+                                      id: Int,
+                                      rdd: RDD[_],
+                                      numTasks: Int,
+                                      parents: List[Stage],
+                                      firstJobId: Int,
+                                      callSite: CallSite,
+                                    //与ShuffleMapStage对应的ShuffleDependency
+                                      val shuffleDep: ShuffleDependency[_, _, _],
+                                      mapOutputTrackerMaster: MapOutputTrackerMaster)
   extends Stage(id, rdd, numTasks, parents, firstJobId, callSite) {
 
+  /**
+    * 与ShuffleMapStage相关联的ActiveJob
+    */
   private[this] var _mapStageJobs: List[ActiveJob] = Nil
 
   /**
-   * Partitions that either haven't yet been computed, or that were computed on an executor
-   * that has since been lost, so should be re-computed.  This variable is used by the
-   * DAGScheduler to determine when a stage has completed. Task successes in both the active
-   * attempt for the stage or in earlier attempts for this stage can cause paritition ids to get
-   * removed from pendingPartitions. As a result, this variable may be inconsistent with the pending
-   * tasks in the TaskSetManager for the active attempt for the stage (the partitions stored here
-   * will always be a subset of the partitions that the TaskSetManager thinks are pending).
-   */
+    * Partitions that either haven't yet been computed, or that were computed on an executor
+    * that has since been lost, so should be re-computed.  This variable is used by the
+    * DAGScheduler to determine when a stage has completed. Task successes in both the active
+    * attempt for the stage or in earlier attempts for this stage can cause paritition ids to get
+    * removed from pendingPartitions. As a result, this variable may be inconsistent with the pending
+    * tasks in the TaskSetManager for the active attempt for the stage (the partitions stored here
+    * will always be a subset of the partitions that the TaskSetManager thinks are pending).
+    * 存储待处理分区的索引集合
+    */
   val pendingPartitions = new HashSet[Int]
 
   override def toString: String = "ShuffleMapStage " + id
 
   /**
-   * Returns the list of active jobs,
-   * i.e. map-stage jobs that were submitted to execute this stage independently (if any).
-   */
+    * Returns the list of active jobs,
+    * i.e. map-stage jobs that were submitted to execute this stage independently (if any).
+    */
   def mapStageJobs: Seq[ActiveJob] = _mapStageJobs
 
   /** Adds the job to the active job list. */
@@ -77,17 +87,22 @@ private[spark] class ShuffleMapStage(
   }
 
   /**
-   * Number of partitions that have shuffle outputs.
-   * When this reaches [[numPartitions]], this map stage is ready.
-   */
+    * Number of partitions that have shuffle outputs.
+    * When this reaches [[numPartitions]], this map stage is ready.
+    */
   def numAvailableOutputs: Int = mapOutputTrackerMaster.getNumAvailableOutputs(shuffleDep.shuffleId)
 
   /**
-   * Returns true if the map stage is ready, i.e. all partitions have shuffle outputs.
-   */
+    * Returns true if the map stage is ready, i.e. all partitions have shuffle outputs.
+    * 当numAvailableOutputs和numPartitions相等时才为true。
+    * 也就是说 ShuffleMapStage的所有分区的map任务都执行成功后， ShuffleMapStage才是可用的
+    */
   def isAvailable: Boolean = numAvailableOutputs == numPartitions
 
-  /** Returns the sequence of partition ids that are missing (i.e. needs to be computed). */
+  /**
+    * Returns the sequence of partition ids that are missing (i.e. needs to be computed).
+    * 找到所有还未执行成功而需要计算的分区
+    * */
   override def findMissingPartitions(): Seq[Int] = {
     mapOutputTrackerMaster
       .findMissingPartitions(shuffleDep.shuffleId)

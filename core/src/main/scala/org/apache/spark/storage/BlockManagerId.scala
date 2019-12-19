@@ -62,12 +62,21 @@ class BlockManagerId private (
 
   def port: Int = port_
 
+
+  /**
+    * 拓扑信息
+    * @return
+    */
   def topologyInfo: Option[String] = topologyInfo_
 
   def isDriver: Boolean = {
     executorId == SparkContext.DRIVER_IDENTIFIER
   }
 
+  /**
+    *  将BlockManagerId的所有信息序列化后写到外部二进制流中。
+    * @param out
+    */
   override def writeExternal(out: ObjectOutput): Unit = Utils.tryOrIOException {
     out.writeUTF(executorId_)
     out.writeUTF(host_)
@@ -77,6 +86,11 @@ class BlockManagerId private (
     topologyInfo.foreach(out.writeUTF(_))
   }
 
+
+  /**
+    * 从外部二进制数据流中读取BlockManagerId的所有信息
+    * @param in
+    */
   override def readExternal(in: ObjectInput): Unit = Utils.tryOrIOException {
     executorId_ = in.readUTF()
     host_ = in.readUTF()

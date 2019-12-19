@@ -848,6 +848,8 @@ private[spark] object Utils extends Logging {
    * Return the configured local directories where Spark can write files. This
    * method does not create any directories on its own, it only encapsulates the
    * logic of locating the local directories according to deployment mode.
+    *
+    *
    */
   def getConfiguredLocalDirs(conf: SparkConf): Array[String] = {
     val shuffleServiceEnabled = conf.get(config.SHUFFLE_SERVICE_ENABLED)

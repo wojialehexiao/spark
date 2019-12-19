@@ -34,7 +34,14 @@ private[spark] class BroadcastManager(
     securityManager: SecurityManager)
   extends Logging {
 
+  /**
+    * 是否初始化完成
+    */
   private var initialized = false
+
+  /**
+    * 广播工厂实例
+    */
   private var broadcastFactory: BroadcastFactory = null
 
   initialize()
@@ -54,6 +61,9 @@ private[spark] class BroadcastManager(
     broadcastFactory.stop()
   }
 
+  /**
+    * 下一个广播对象的广播ID
+    */
   private val nextBroadcastId = new AtomicLong(0)
 
   private[broadcast] val cachedValues =
@@ -74,6 +84,10 @@ private[spark] class BroadcastManager(
 
       case _ => // do nothing
     }
+
+    /**
+      * 用于生成 TorrentBroadcast 实例，作用为广播 TorrentBroadcast中的value。
+      */
     broadcastFactory.newBroadcast[T](value_, isLocal, bid)
   }
 

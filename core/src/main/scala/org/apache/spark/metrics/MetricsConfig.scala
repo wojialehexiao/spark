@@ -35,9 +35,20 @@ private[spark] class MetricsConfig(conf: SparkConf) extends Logging {
   private val INSTANCE_REGEX = "^(\\*|[a-zA-Z]+)\\.(.+)".r
   private val DEFAULT_METRICS_CONF_FILENAME = "metrics.properties"
 
+  /**
+    * 度量的属性信息。
+    */
   private[metrics] val properties = new Properties()
+
+  /**
+    * 每个实例的子属性。缓存每个实例与其属性的映射关系
+    */
   private[metrics] var perInstanceSubProperties: mutable.HashMap[String, Properties] = null
 
+  /**
+    * 设置默认属性
+    * @param prop
+    */
   private def setDefaultProperties(prop: Properties): Unit = {
     prop.setProperty("*.sink.servlet.class", "org.apache.spark.metrics.sink.MetricsServlet")
     prop.setProperty("*.sink.servlet.path", "/metrics/json")
@@ -48,6 +59,7 @@ private[spark] class MetricsConfig(conf: SparkConf) extends Logging {
   /**
    * Load properties from various places, based on precedence
    * If the same property is set again latter on in the method, it overwrites the previous value
+    * 初始化
    */
   def initialize(): Unit = {
     // Add default properties in case there's no properties file
@@ -103,6 +115,7 @@ private[spark] class MetricsConfig(conf: SparkConf) extends Logging {
    * @param prop the flat list of properties to "unflatten" based on prefixes
    * @param regex the regex that the prefix has to comply with
    * @return an unflatted map, mapping prefix with sub-properties under that prefix
+    *         提取实例属性
    */
   def subProperties(prop: Properties, regex: Regex): mutable.HashMap[String, Properties] = {
     val subProperties = new mutable.HashMap[String, Properties]
@@ -115,6 +128,12 @@ private[spark] class MetricsConfig(conf: SparkConf) extends Logging {
     subProperties
   }
 
+
+  /**
+    * 获取实例属性
+    * @param inst
+    * @return
+    */
   def getInstance(inst: String): Properties = {
     perInstanceSubProperties.get(inst) match {
       case Some(s) => s
@@ -125,6 +144,7 @@ private[spark] class MetricsConfig(conf: SparkConf) extends Logging {
   /**
    * Loads configuration from a config file. If no config file is provided, try to get file
    * in class path.
+    * 从配置文件加载属性， 使用metrices.properties
    */
   private[this] def loadPropertiesFromFile(path: Option[String]): Unit = {
     var is: InputStream = null

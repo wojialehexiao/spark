@@ -68,25 +68,36 @@ import org.apache.spark.util.Utils
  * [options] represent the specific property of this source or sink.
  */
 private[spark] class MetricsSystem private (
+    //实例名
     val instance: String,
+    //度量配置
     conf: SparkConf,
+    //
     securityMgr: SecurityManager)
   extends Logging {
 
   private[this] val metricsConfig = new MetricsConfig(conf)
 
+  //用于缓存所有注册到MetricsSystem的度量输出
   private val sinks = new mutable.ArrayBuffer[Sink]
+
+  //缓存所有注册到MetricsSystem的Source
   private val sources = new mutable.ArrayBuffer[Source]
+
+  //度量注册点MetricRegistry， Source和Sink实际都是通过MetricRegistry注册到Metric的度量仓库中的
   private val registry = new MetricRegistry()
 
+  //当前MetricSystem是否在运行
   private var running: Boolean = false
 
   // Treat MetricsServlet as a special sink as it should be exposed to add handlers to web ui
+  // metricsServlet将在添加ServletContextHandler后通过WebUI展示
   private var metricsServlet: Option[MetricsServlet] = None
   private var prometheusServlet: Option[PrometheusServlet] = None
 
   /**
    * Get any UI handlers used by this metrics system; can only be called after start().
+    * 获取ServletContextHandler
    */
   def getServletHandlers: Array[ServletContextHandler] = {
     require(running, "Can only call getServletHandlers on a running MetricsSystem")
@@ -96,13 +107,22 @@ private[spark] class MetricsSystem private (
 
   metricsConfig.initialize()
 
+  //启动MetricsSystem
   def start(registerStaticSources: Boolean = true): Unit = {
     require(!running, "Attempting to start a MetricsSystem that is already running")
     running = true
     if (registerStaticSources) {
+
+      //将静态的度量来源CodegenMetrics和HiveCatalogMetrics注册到MetricsRegistry
       StaticSources.allSources.foreach(registerSource)
+
+      //从初始化完成的MetricsConfig中获取当前实例的度量来源属性
       registerSources()
     }
+
+
+    //从初始化完成的MetricsConfig中获取当前实例的度量输出属性
+    //并将这些属性注册到sinks
     registerSinks()
     sinks.foreach(_.start)
   }
@@ -125,9 +145,14 @@ private[spark] class MetricsSystem private (
    * The name is structured as follows: <app ID>.<executor ID (or "driver")>.<source name>.
    * If either ID is not available, this defaults to just using <source name>.
    *
+    *
+    * 构建度量源的注册名
+    *
    * @param source Metric source to be named by this method.
    * @return A unique metric name for each combination of
    *         application, executor/driver and metric source.
+    *
+    *
    */
   private[spark] def buildRegistryName(source: Source): String = {
     val metricsNamespace = conf.get(METRICS_NAMESPACE).orElse(conf.getOption("spark.app.id"))
@@ -157,6 +182,10 @@ private[spark] class MetricsSystem private (
   def getSourcesByName(sourceName: String): Seq[Source] =
     sources.filter(_.sourceName == sourceName)
 
+  /**
+    * 注册度量源
+    * @param source
+    */
   def registerSource(source: Source): Unit = {
     sources += source
     try {

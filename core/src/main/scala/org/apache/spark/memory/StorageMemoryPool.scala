@@ -18,23 +18,29 @@
 package org.apache.spark.memory
 
 import javax.annotation.concurrent.GuardedBy
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.storage.BlockId
 import org.apache.spark.storage.memory.MemoryStore
 
 /**
- * Performs bookkeeping for managing an adjustable-size pool of memory that is used for storage
- * (caching).
- *
- * @param lock a [[MemoryManager]] instance to synchronize on
- * @param memoryMode the type of memory tracked by this pool (on- or off-heap)
- */
+  * Performs bookkeeping for managing an adjustable-size pool of memory that is used for storage
+  * (caching).
+  *
+  * 存储体系用到的内存池
+  *
+  * @param lock       a [[MemoryManager]] instance to synchronize on
+  * @param memoryMode the type of memory tracked by this pool (on- or off-heap)
+  */
 private[memory] class StorageMemoryPool(
-    lock: Object,
-    memoryMode: MemoryMode
-  ) extends MemoryPool(lock) with Logging {
+                                         lock: Object,
+                                       //内存模式
+                                         memoryMode: MemoryMode
+                                       ) extends MemoryPool(lock) with Logging {
 
+
+  /**
+    * 内存池名称
+    */
   private[this] val poolName: String = memoryMode match {
     case MemoryMode.ON_HEAP => "on-heap storage"
     case MemoryMode.OFF_HEAP => "off-heap storage"
@@ -43,11 +49,17 @@ private[memory] class StorageMemoryPool(
   @GuardedBy("lock")
   private[this] var _memoryUsed: Long = 0L
 
+
   override def memoryUsed: Long = lock.synchronized {
     _memoryUsed
   }
 
+  /**
+    * 当前StorageMemoryPool所管理的MemoryStore。
+    */
   private var _memoryStore: MemoryStore = _
+
+
   def memoryStore: MemoryStore = {
     if (_memoryStore == null) {
       throw new IllegalStateException("memory store not initialized yet")
@@ -56,39 +68,43 @@ private[memory] class StorageMemoryPool(
   }
 
   /**
-   * Set the [[MemoryStore]] used by this manager to evict cached blocks.
-   * This must be set after construction due to initialization ordering constraints.
-   */
+    * Set the [[MemoryStore]] used by this manager to evict cached blocks.
+    * This must be set after construction due to initialization ordering constraints.
+    *
+    */
   final def setMemoryStore(store: MemoryStore): Unit = {
     _memoryStore = store
   }
 
   /**
-   * Acquire N bytes of memory to cache the given block, evicting existing ones if necessary.
-   *
-   * @return whether all N bytes were successfully granted.
-   */
+    * Acquire N bytes of memory to cache the given block, evicting existing ones if necessary.
+    *
+    * @return whether all N bytes were successfully granted.
+    */
   def acquireMemory(blockId: BlockId, numBytes: Long): Boolean = lock.synchronized {
     val numBytesToFree = math.max(0, numBytes - memoryFree)
     acquireMemory(blockId, numBytes, numBytesToFree)
   }
 
   /**
-   * Acquire N bytes of storage memory for the given block, evicting existing ones if necessary.
-   *
-   * @param blockId the ID of the block we are acquiring storage memory for
-   * @param numBytesToAcquire the size of this block
-   * @param numBytesToFree the amount of space to be freed through evicting blocks
-   * @return whether all N bytes were successfully granted.
-   */
+    * Acquire N bytes of storage memory for the given block, evicting existing ones if necessary.
+    *
+    * 用于给定block获取内存
+    *
+    * @param blockId           the ID of the block we are acquiring storage memory for
+    * @param numBytesToAcquire the size of this block
+    * @param numBytesToFree    the amount of space to be freed through evicting blocks
+    * @return whether all N bytes were successfully granted.
+    */
   def acquireMemory(
-      blockId: BlockId,
-      numBytesToAcquire: Long,
-      numBytesToFree: Long): Boolean = lock.synchronized {
+                     blockId: BlockId,
+                     numBytesToAcquire: Long,
+                     numBytesToFree: Long): Boolean = lock.synchronized {
     assert(numBytesToAcquire >= 0)
     assert(numBytesToFree >= 0)
     assert(memoryUsed <= poolSize)
     if (numBytesToFree > 0) {
+      //腾出numBytesToFree属性指定大小的空间
       memoryStore.evictBlocksToFreeSpace(Some(blockId), numBytesToFree, memoryMode)
     }
     // NOTE: If the memory store evicts blocks, then those evictions will synchronously call
@@ -101,6 +117,10 @@ private[memory] class StorageMemoryPool(
     enoughMemory
   }
 
+  /**
+    * 释放内存
+    * @param size
+    */
   def releaseMemory(size: Long): Unit = lock.synchronized {
     if (size > _memoryUsed) {
       logWarning(s"Attempted to release $size bytes of storage " +
@@ -111,16 +131,25 @@ private[memory] class StorageMemoryPool(
     }
   }
 
+
+  /**
+    * 释放当前内存池所有内存
+    */
   def releaseAllMemory(): Unit = lock.synchronized {
     _memoryUsed = 0
   }
 
   /**
-   * Free space to shrink the size of this storage memory pool by `spaceToFree` bytes.
-   * Note: this method doesn't actually reduce the pool size but relies on the caller to do so.
-   *
-   * @return number of bytes to be removed from the pool's capacity.
-   */
+    * Free space to shrink the size of this storage memory pool by `spaceToFree` bytes.
+    * Note: this method doesn't actually reduce the pool size but relies on the caller to do so.
+    * 释放指定大小的空间，缩小内存池的大小
+    *
+    * 如果空闲内存大于spaceToFree，返回spaceToFree
+    *
+    * 否则需要腾出占用内存的部分block，以补齐spaceToFree的大小，并返回腾出空间与memoryFree大小之和
+    *
+    * @return number of bytes to be removed from the pool's capacity.
+    */
   def freeSpaceToShrinkPool(spaceToFree: Long): Long = lock.synchronized {
     val spaceFreedByReleasingUnusedMemory = math.min(spaceToFree, memoryFree)
     val remainingSpaceToFree = spaceToFree - spaceFreedByReleasingUnusedMemory

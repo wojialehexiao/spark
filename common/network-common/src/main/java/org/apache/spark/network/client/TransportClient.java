@@ -190,6 +190,7 @@ public class TransportClient implements Closeable {
     }
 
     long requestId = requestId();
+    //注册id和回调
     handler.addRpcRequest(requestId, callback);
 
     RpcChannelListener listener = new RpcChannelListener(requestId, callback);

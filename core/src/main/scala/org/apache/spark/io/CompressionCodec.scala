@@ -70,6 +70,11 @@ private[spark] object CompressionCodec {
     "snappy" -> classOf[SnappyCompressionCodec].getName,
     "zstd" -> classOf[ZStdCompressionCodec].getName)
 
+  /**
+    * spark.io.compression.codec 默认为lz4，
+    * @param conf
+    * @return
+    */
   def getCodecName(conf: SparkConf): String = {
     conf.get(IO_COMPRESSION_CODEC)
   }

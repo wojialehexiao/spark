@@ -18,27 +18,42 @@
 package org.apache.spark.scheduler
 
 /**
- * An interface for sort algorithm
- * FIFO: FIFO algorithm between TaskSetManagers
- * FS: FS algorithm between Pools, and FIFO or FS within Pools
- */
+  * An interface for sort algorithm
+  * FIFO: FIFO algorithm between TaskSetManagers
+  * FS: FS algorithm between Pools, and FIFO or FS within Pools
+  */
 private[spark] trait SchedulingAlgorithm {
+
+  /**
+    * 用于对两个Schedulable进行比较
+    * @param s1
+    * @param s2
+    * @return
+    */
   def comparator(s1: Schedulable, s2: Schedulable): Boolean
 }
+
 
 private[spark] class FIFOSchedulingAlgorithm extends SchedulingAlgorithm {
   override def comparator(s1: Schedulable, s2: Schedulable): Boolean = {
     val priority1 = s1.priority
     val priority2 = s2.priority
+
+    //对s1和s2两个Schedulable的优先级进行比较
     var res = math.signum(priority1 - priority2)
+
     if (res == 0) {
       val stageId1 = s1.stageId
       val stageId2 = s2.stageId
+      //对s1和s2所属的Stage的身份标识进行比较
       res = math.signum(stageId1 - stageId2)
     }
+
+    //如果比较结果小于0，则s1优先， 否则s2优先
     res < 0
   }
 }
+
 
 private[spark] class FairSchedulingAlgorithm extends SchedulingAlgorithm {
   override def comparator(s1: Schedulable, s2: Schedulable): Boolean = {

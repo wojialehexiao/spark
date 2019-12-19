@@ -17,195 +17,238 @@
 
 package org.apache.spark.network.server;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
+import io.netty.channel.Channel;
+import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.spark.network.buffer.ManagedBuffer;
+import org.apache.spark.network.client.TransportClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Preconditions;
-import io.netty.channel.Channel;
-import org.apache.commons.lang3.tuple.ImmutablePair;
-import org.apache.commons.lang3.tuple.Pair;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import org.apache.spark.network.buffer.ManagedBuffer;
-import org.apache.spark.network.client.TransportClient;
-
 /**
  * StreamManager which allows registration of an Iterator&lt;ManagedBuffer&gt;, which are
  * individually fetched as chunks by the client. Each registered buffer is one chunk.
  */
 public class OneForOneStreamManager extends StreamManager {
-  private static final Logger logger = LoggerFactory.getLogger(OneForOneStreamManager.class);
+    private static final Logger logger = LoggerFactory.getLogger(OneForOneStreamManager.class);
 
-  private final AtomicLong nextStreamId;
-  private final ConcurrentHashMap<Long, StreamState> streams;
+    private final AtomicLong nextStreamId;
+    private final ConcurrentHashMap<Long, StreamState> streams;
 
-  /** State of a single stream. */
-  private static class StreamState {
-    final String appId;
-    final Iterator<ManagedBuffer> buffers;
+    /**
+     * State of a single stream.
+     */
+    private static class StreamState {
 
-    // The channel associated to the stream
-    final Channel associatedChannel;
+        /**
+         * 请求流所属的应用程序Id。 此属性只有在ExternalShuffleClient启用后才会用到
+         */
+        final String appId;
 
-    // Used to keep track of the index of the buffer that the user has retrieved, just to ensure
-    // that the caller only requests each chunk one at a time, in order.
-    int curChunk = 0;
+        /**
+         * ManagedBuffer的缓冲
+         */
+        final Iterator<ManagedBuffer> buffers;
 
-    // Used to keep track of the number of chunks being transferred and not finished yet.
-    volatile long chunksBeingTransferred = 0L;
 
-    StreamState(String appId, Iterator<ManagedBuffer> buffers, Channel channel) {
-      this.appId = appId;
-      this.buffers = Preconditions.checkNotNull(buffers);
-      this.associatedChannel = channel;
-    }
-  }
+        /**
+         * 当前流相关联的Channel
+         */
+        // The channel associated to the stream
+        final Channel associatedChannel;
 
-  public OneForOneStreamManager() {
-    // For debugging purposes, start with a random stream id to help identifying different streams.
-    // This does not need to be globally unique, only unique to this class.
-    nextStreamId = new AtomicLong((long) new Random().nextInt(Integer.MAX_VALUE) * 1000);
-    streams = new ConcurrentHashMap<>();
-  }
+        // Used to keep track of the index of the buffer that the user has retrieved, just to ensure
+        // that the caller only requests each chunk one at a time, in order.
+        /**
+         * 为了保证客户端按照顺序每次请求一个块，所以用此属性跟踪客户端当前接收到的ManagedBuffer
+         */
+        int curChunk = 0;
 
-  @Override
-  public ManagedBuffer getChunk(long streamId, int chunkIndex) {
-    StreamState state = streams.get(streamId);
-    if (chunkIndex != state.curChunk) {
-      throw new IllegalStateException(String.format(
-        "Received out-of-order chunk index %s (expected %s)", chunkIndex, state.curChunk));
-    } else if (!state.buffers.hasNext()) {
-      throw new IllegalStateException(String.format(
-        "Requested chunk index beyond end %s", chunkIndex));
-    }
-    state.curChunk += 1;
-    ManagedBuffer nextChunk = state.buffers.next();
+        // Used to keep track of the number of chunks being transferred and not finished yet.
+        volatile long chunksBeingTransferred = 0L;
 
-    if (!state.buffers.hasNext()) {
-      logger.trace("Removing stream id {}", streamId);
-      streams.remove(streamId);
-    }
-
-    return nextChunk;
-  }
-
-  @Override
-  public ManagedBuffer openStream(String streamChunkId) {
-    Pair<Long, Integer> streamChunkIdPair = parseStreamChunkId(streamChunkId);
-    return getChunk(streamChunkIdPair.getLeft(), streamChunkIdPair.getRight());
-  }
-
-  public static String genStreamChunkId(long streamId, int chunkId) {
-    return String.format("%d_%d", streamId, chunkId);
-  }
-
-  // Parse streamChunkId to be stream id and chunk id. This is used when fetch remote chunk as a
-  // stream.
-  public static Pair<Long, Integer> parseStreamChunkId(String streamChunkId) {
-    String[] array = streamChunkId.split("_");
-    assert array.length == 2:
-      "Stream id and chunk index should be specified.";
-    long streamId = Long.valueOf(array[0]);
-    int chunkIndex = Integer.valueOf(array[1]);
-    return ImmutablePair.of(streamId, chunkIndex);
-  }
-
-  @Override
-  public void connectionTerminated(Channel channel) {
-    // Close all streams which have been associated with the channel.
-    for (Map.Entry<Long, StreamState> entry: streams.entrySet()) {
-      StreamState state = entry.getValue();
-      if (state.associatedChannel == channel) {
-        streams.remove(entry.getKey());
-
-        // Release all remaining buffers.
-        while (state.buffers.hasNext()) {
-          ManagedBuffer buffer = state.buffers.next();
-          if (buffer != null) {
-            buffer.release();
-          }
+        StreamState(String appId, Iterator<ManagedBuffer> buffers, Channel channel) {
+            this.appId = appId;
+            this.buffers = Preconditions.checkNotNull(buffers);
+            this.associatedChannel = channel;
         }
-      }
-    }
-  }
-
-  @Override
-  public void checkAuthorization(TransportClient client, long streamId) {
-    if (client.getClientId() != null) {
-      StreamState state = streams.get(streamId);
-      Preconditions.checkArgument(state != null, "Unknown stream ID.");
-      if (!client.getClientId().equals(state.appId)) {
-        throw new SecurityException(String.format(
-          "Client %s not authorized to read stream %d (app %s).",
-          client.getClientId(),
-          streamId,
-          state.appId));
-      }
-    }
-  }
-
-  @Override
-  public void chunkBeingSent(long streamId) {
-    StreamState streamState = streams.get(streamId);
-    if (streamState != null) {
-      streamState.chunksBeingTransferred++;
     }
 
-  }
-
-  @Override
-  public void streamBeingSent(String streamId) {
-    chunkBeingSent(parseStreamChunkId(streamId).getLeft());
-  }
-
-  @Override
-  public void chunkSent(long streamId) {
-    StreamState streamState = streams.get(streamId);
-    if (streamState != null) {
-      streamState.chunksBeingTransferred--;
+    public OneForOneStreamManager() {
+        // For debugging purposes, start with a random stream id to help identifying different streams.
+        // This does not need to be globally unique, only unique to this class.
+        nextStreamId = new AtomicLong((long) new Random().nextInt(Integer.MAX_VALUE) * 1000);
+        streams = new ConcurrentHashMap<>();
     }
-  }
 
-  @Override
-  public void streamSent(String streamId) {
-    chunkSent(OneForOneStreamManager.parseStreamChunkId(streamId).getLeft());
-  }
 
-  @Override
-  public long chunksBeingTransferred() {
-    long sum = 0L;
-    for (StreamState streamState: streams.values()) {
-      sum += streamState.chunksBeingTransferred;
+    /**
+     * 获取单个块
+     * @param streamId id of a stream that has been previously registered with the StreamManager.
+     * @param chunkIndex 0-indexed chunk of the stream that's requested
+     * @return
+     */
+    @Override
+    public ManagedBuffer getChunk(long streamId, int chunkIndex) {
+
+        //从streams中获取StreamState。如果要获取的块的索引与StreamState的curChunk属性不相等，则说明顺序有问题。
+        //如果要获取的块的索引超出buffers缓存的大小，这说明请求了超出范围的块
+        StreamState state = streams.get(streamId);
+        if (chunkIndex != state.curChunk) {
+            throw new IllegalStateException(String.format(
+                    "Received out-of-order chunk index %s (expected %s)", chunkIndex, state.curChunk));
+        } else if (!state.buffers.hasNext()) {
+            throw new IllegalStateException(String.format(
+                    "Requested chunk index beyond end %s", chunkIndex));
+        }
+
+        //为下次接收请求做好准备
+        state.curChunk += 1;
+
+        //从buffers缓存中获取ManagedBuffer
+        ManagedBuffer nextChunk = state.buffers.next();
+
+
+        //buffers缓冲中的ManagedBuffer，已经全部被客户端获取
+        if (!state.buffers.hasNext()) {
+            logger.trace("Removing stream id {}", streamId);
+            streams.remove(streamId);
+        }
+
+        return nextChunk;
     }
-    return sum;
-  }
 
-  /**
-   * Registers a stream of ManagedBuffers which are served as individual chunks one at a time to
-   * callers. Each ManagedBuffer will be release()'d after it is transferred on the wire. If a
-   * client connection is closed before the iterator is fully drained, then the remaining buffers
-   * will all be release()'d.
-   *
-   * If an app ID is provided, only callers who've authenticated with the given app ID will be
-   * allowed to fetch from this stream.
-   *
-   * This method also associates the stream with a single client connection, which is guaranteed
-   * to be the only reader of the stream. Once the connection is closed, the stream will never
-   * be used again, enabling cleanup by `connectionTerminated`.
-   */
-  public long registerStream(String appId, Iterator<ManagedBuffer> buffers, Channel channel) {
-    long myStreamId = nextStreamId.getAndIncrement();
-    streams.put(myStreamId, new StreamState(appId, buffers, channel));
-    return myStreamId;
-  }
+    @Override
+    public ManagedBuffer openStream(String streamChunkId) {
+        Pair<Long, Integer> streamChunkIdPair = parseStreamChunkId(streamChunkId);
+        return getChunk(streamChunkIdPair.getLeft(), streamChunkIdPair.getRight());
+    }
 
-  @VisibleForTesting
-  public int numStreamStates() {
-    return streams.size();
-  }
+    public static String genStreamChunkId(long streamId, int chunkId) {
+        return String.format("%d_%d", streamId, chunkId);
+    }
+
+    // Parse streamChunkId to be stream id and chunk id. This is used when fetch remote chunk as a
+    // stream.
+    public static Pair<Long, Integer> parseStreamChunkId(String streamChunkId) {
+        String[] array = streamChunkId.split("_");
+        assert array.length == 2 :
+                "Stream id and chunk index should be specified.";
+        long streamId = Long.valueOf(array[0]);
+        int chunkIndex = Integer.valueOf(array[1]);
+        return ImmutablePair.of(streamId, chunkIndex);
+    }
+
+    @Override
+    public void connectionTerminated(Channel channel) {
+        // Close all streams which have been associated with the channel.
+        for (Map.Entry<Long, StreamState> entry : streams.entrySet()) {
+            StreamState state = entry.getValue();
+            if (state.associatedChannel == channel) {
+                streams.remove(entry.getKey());
+
+                // Release all remaining buffers.
+                while (state.buffers.hasNext()) {
+                    ManagedBuffer buffer = state.buffers.next();
+                    if (buffer != null) {
+                        buffer.release();
+                    }
+                }
+            }
+        }
+    }
+
+
+    /**
+     * 如果没有配置对管道进行SASL认证， TransportClient的clientId为null因而实际不走权限检查流程。
+     * 当启用了SASL认证，客户端给TransportClient的clientId赋值，因此会走检查
+     * check的Authorization 将TransportClient的clientId属性值streamId对应StreamState的APPId的值进行相等比较
+     * @param client
+     * @param streamId
+     */
+    @Override
+    public void checkAuthorization(TransportClient client, long streamId) {
+        if (client.getClientId() != null) {
+            StreamState state = streams.get(streamId);
+            Preconditions.checkArgument(state != null, "Unknown stream ID.");
+            if (!client.getClientId().equals(state.appId)) {
+                throw new SecurityException(String.format(
+                        "Client %s not authorized to read stream %d (app %s).",
+                        client.getClientId(),
+                        streamId,
+                        state.appId));
+            }
+        }
+    }
+
+    @Override
+    public void chunkBeingSent(long streamId) {
+        StreamState streamState = streams.get(streamId);
+        if (streamState != null) {
+            streamState.chunksBeingTransferred++;
+        }
+
+    }
+
+    @Override
+    public void streamBeingSent(String streamId) {
+        chunkBeingSent(parseStreamChunkId(streamId).getLeft());
+    }
+
+    @Override
+    public void chunkSent(long streamId) {
+        StreamState streamState = streams.get(streamId);
+        if (streamState != null) {
+            streamState.chunksBeingTransferred--;
+        }
+    }
+
+    @Override
+    public void streamSent(String streamId) {
+        chunkSent(OneForOneStreamManager.parseStreamChunkId(streamId).getLeft());
+    }
+
+    @Override
+    public long chunksBeingTransferred() {
+        long sum = 0L;
+        for (StreamState streamState : streams.values()) {
+            sum += streamState.chunksBeingTransferred;
+        }
+        return sum;
+    }
+
+    /**
+     * Registers a stream of ManagedBuffers which are served as individual chunks one at a time to
+     * callers. Each ManagedBuffer will be release()'d after it is transferred on the wire. If a
+     * client connection is closed before the iterator is fully drained, then the remaining buffers
+     * will all be release()'d.
+     * <p>
+     * If an app ID is provided, only callers who've authenticated with the given app ID will be
+     * allowed to fetch from this stream.
+     * <p>
+     * This method also associates the stream with a single client connection, which is guaranteed
+     * to be the only reader of the stream. Once the connection is closed, the stream will never
+     * be used again, enabling cleanup by `connectionTerminated`.
+     *
+     * 用于向OneForOneStreamManager的streams缓存中注册流
+     */
+    public long registerStream(String appId, Iterator<ManagedBuffer> buffers, Channel channel) {
+        //生成新的streamId
+        long myStreamId = nextStreamId.getAndIncrement();
+        streams.put(myStreamId, new StreamState(appId, buffers, channel));
+        return myStreamId;
+    }
+
+    @VisibleForTesting
+    public int numStreamStates() {
+        return streams.size();
+    }
 }
