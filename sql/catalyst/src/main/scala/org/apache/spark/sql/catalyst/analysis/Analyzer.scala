@@ -188,13 +188,18 @@ class Analyzer(
     Batch("Hints", fixedPoint,
       new ResolveHints.ResolveJoinStrategyHints(conf),
       ResolveHints.ResolveCoalesceHints),
+
     Batch("Simple Sanity Check", Once,
       LookupFunctions),
+
+
     Batch("Substitution", fixedPoint,
       CTESubstitution,
       WindowsSubstitution,
       EliminateUnions,
       new SubstituteUnresolvedOrdinals(conf)),
+
+
     Batch("Resolution", fixedPoint,
       ResolveTableValuedFunctions ::
       new ResolveCatalogs(catalogManager) ::
@@ -232,18 +237,34 @@ class Analyzer(
       ResolveRandomSeed ::
       TypeCoercion.typeCoercionRules(conf) ++
       extendedResolutionRules : _*),
+
+
     Batch("PostgreSQL Dialect", Once, PostgreSQLDialect.postgreSQLDialectRules: _*),
+
+
     Batch("Post-Hoc Resolution", Once, postHocResolutionRules: _*),
+
+
     Batch("Remove Unresolved Hints", Once,
       new ResolveHints.RemoveAllHints(conf)),
+
+
     Batch("Nondeterministic", Once,
       PullOutNondeterministic),
+
+
     Batch("UDF", Once,
       HandleNullInputsForUDF),
+
+
     Batch("UpdateNullability", Once,
       UpdateAttributeNullability),
+
+
     Batch("Subquery", Once,
       UpdateOuterReferences),
+
+
     Batch("Cleanup", fixedPoint,
       CleanupAliases)
   )
@@ -270,7 +291,8 @@ class Analyzer(
    */
   object ResolveAliases extends Rule[LogicalPlan] {
     private def assignAliases(exprs: Seq[NamedExpression]) = {
-      exprs.map(_.transformUp { case u @ UnresolvedAlias(child, optGenAliasFunc) =>
+      exprs.map(_.transformUp {
+        case u @ UnresolvedAlias(child, optGenAliasFunc) =>
           child match {
             case ne: NamedExpression => ne
             case go @ GeneratorOuter(g: Generator) if g.resolved => MultiAlias(go, Nil)
@@ -282,7 +304,9 @@ class Analyzer(
               Alias(child, optGenAliasFunc.get.apply(e))()
             case e => Alias(e, toPrettySQL(e))()
           }
+
         }
+
       ).asInstanceOf[Seq[NamedExpression]]
     }
 
@@ -756,6 +780,7 @@ class Analyzer(
     }
 
     def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsUp {
+
       case i @ InsertIntoStatement(u @ UnresolvedRelation(AsTableIdentifier(ident)), _, child, _, _)
           if child.resolved =>
         EliminateSubqueryAliases(lookupTableFromCatalog(ident, u)) match {
@@ -1552,10 +1577,15 @@ class Analyzer(
       case q: LogicalPlan =>
         q transformExpressions {
           case u if !u.childrenResolved => u // Skip until children are resolved.
+
+
           case u: UnresolvedAttribute if resolver(u.name, VirtualColumn.hiveGroupingIdName) =>
+
             withPosition(u) {
               Alias(GroupingID(Nil), VirtualColumn.hiveGroupingIdName)()
             }
+
+
           case u @ UnresolvedGenerator(name, children) =>
             withPosition(u) {
               catalog.lookupFunction(name, children) match {
@@ -1565,8 +1595,11 @@ class Analyzer(
                     s"its class is ${other.getClass.getCanonicalName}, which is not a generator.")
               }
             }
+
+
           case u @ UnresolvedFunction(funcId, children, isDistinct) =>
             withPosition(u) {
+
               catalog.lookupFunction(funcId, children) match {
                 // AggregateWindowFunctions are AggregateFunctions that can only be evaluated within
                 // the context of a Window clause. They do not need to be wrapped in an

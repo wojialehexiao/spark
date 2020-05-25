@@ -20,29 +20,36 @@ package org.apache.spark.util.collection
 import scala.collection.mutable.PriorityQueue
 
 /**
- * MedianHeap is designed to be used to quickly track the median of a group of numbers
- * that may contain duplicates. Inserting a new number has O(log n) time complexity and
- * determining the median has O(1) time complexity.
- * The basic idea is to maintain two heaps: a smallerHalf and a largerHalf. The smallerHalf
- * stores the smaller half of all numbers while the largerHalf stores the larger half.
- * The sizes of two heaps need to be balanced each time when a new number is inserted so
- * that their sizes will not be different by more than 1. Therefore each time when
- * findMedian() is called we check if two heaps have the same size. If they do, we should
- * return the average of the two top values of heaps. Otherwise we return the top of the
- * heap which has one more element.
- */
+  * MedianHeap is designed to be used to quickly track the median of a group of numbers that may contain duplicates.
+  * Inserting a new number has O(log n) time complexity and determining the median has O(1) time complexity.
+  * The basic idea is to maintain two heaps: a smallerHalf and a largerHalf.
+  * The smallerHalf stores the smaller half of all numbers while the largerHalf stores the larger half.
+  * The sizes of two heaps need to be balanced each time when a new number is inserted so that their sizes will not be different by more than 1.
+  * Therefore each time when findMedian() is called we check if two heaps have the same size.
+  * If they do, we should return the average of the two top values of heaps.
+  * Otherwise we return the top of the heap which has one more element.
+  *
+  * MedianHeap旨在用于快速跟踪可能包含重复项的一组数字的中位数。
+  * 插入新数字的时间复杂度为O（log n），确定中位数的时间复杂度为O（1）。
+  * 基本思想是维护两个堆：较小的一半和较大的一半。
+  * 较小的一半存储所有数字的较小一半，而较大的一半存储较大的一半。
+  * 每次插入新数字时，都需要平衡两个堆的大小，以使它们的大小相差不超过1。
+  * 因此，每次调用findMedian（）时，我们都会检查两个堆的大小是否相同。
+  * 如果它们这样做，我们应该返回堆的两个最高值的平均值。
+  * 否则，我们将返回具有另一个元素的堆的顶部。
+  */
 private[spark] class MedianHeap(implicit val ord: Ordering[Double]) {
 
   /**
-   * Stores all the numbers less than the current median in a smallerHalf,
-   * i.e median is the maximum, at the root.
-   */
+    * Stores all the numbers less than the current median in a smallerHalf,
+    * i.e median is the maximum, at the root.
+    */
   private[this] var smallerHalf = PriorityQueue.empty[Double](ord)
 
   /**
-   * Stores all the numbers greater than the current median in a largerHalf,
-   * i.e median is the minimum, at the root.
-   */
+    * Stores all the numbers greater than the current median in a largerHalf,
+    * i.e median is the minimum, at the root.
+    */
   private[this] var largerHalf = PriorityQueue.empty[Double](ord.reverse)
 
   def isEmpty(): Boolean = {

@@ -20,30 +20,46 @@ package org.apache.spark.scheduler
 import java.io.{FileInputStream, InputStream}
 import java.util.{Locale, NoSuchElementException, Properties}
 
-import scala.util.control.NonFatal
-import scala.xml.{Node, XML}
-
-import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config.SCHEDULER_ALLOCATION_FILE
 import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
 import org.apache.spark.util.Utils
+import org.apache.spark.{SparkConf, SparkContext}
+
+import scala.util.control.NonFatal
+import scala.xml.{Node, XML}
 
 /**
- * An interface to build Schedulable tree
- * buildPools: build the tree nodes(pools)
- * addTaskSetManager: build the leaf nodes(TaskSetManagers)
- */
+  * An interface to build Schedulable tree
+  * buildPools: build the tree nodes(pools)
+  * addTaskSetManager: build the leaf nodes(TaskSetManagers)
+  */
 private[spark] trait SchedulableBuilder {
+
+  /**
+    * 返回根调度池
+    *
+    * @return
+    */
   def rootPool: Pool
 
+  /**
+    * 对调度池进行构建
+    */
   def buildPools(): Unit
 
+
+  /**
+    * 向指定池内添加TaskSetManager
+    *
+    * @param manager
+    * @param properties
+    */
   def addTaskSetManager(manager: Schedulable, properties: Properties): Unit
 }
 
-private[spark] class FIFOSchedulableBuilder(val rootPool: Pool)
-  extends SchedulableBuilder with Logging {
+
+private[spark] class FIFOSchedulableBuilder(val rootPool: Pool) extends SchedulableBuilder with Logging {
 
   override def buildPools(): Unit = {
     // nothing
@@ -54,30 +70,63 @@ private[spark] class FIFOSchedulableBuilder(val rootPool: Pool)
   }
 }
 
-private[spark] class FairSchedulableBuilder(val rootPool: Pool, conf: SparkConf)
-  extends SchedulableBuilder with Logging {
 
+private[spark] class FairSchedulableBuilder(
+                                           //根调度池
+                                             val rootPool: Pool,
+                                             conf: SparkConf
+                                           ) extends SchedulableBuilder with Logging {
+
+  /**
+    * 用户指定的文件系统中的调度分配文件
+    */
   val schedulerAllocFile = conf.get(SCHEDULER_ALLOCATION_FILE)
+
+  /**
+    * 默认调度文件名
+    */
   val DEFAULT_SCHEDULER_FILE = "fairscheduler.xml"
+
+  /**
+    * 放置TaskSetManager的公平调度线程池的名称
+    */
   val FAIR_SCHEDULER_PROPERTIES = SparkContext.SPARK_SCHEDULER_POOL
+
+
+  /**
+    *
+    */
   val DEFAULT_POOL_NAME = "default"
+
   val MINIMUM_SHARES_PROPERTY = "minShare"
+
   val SCHEDULING_MODE_PROPERTY = "schedulingMode"
+
   val WEIGHT_PROPERTY = "weight"
+
   val POOL_NAME_PROPERTY = "@name"
+
   val POOLS_PROPERTY = "pool"
+
   val DEFAULT_SCHEDULING_MODE = SchedulingMode.FIFO
+
   val DEFAULT_MINIMUM_SHARE = 0
+
   val DEFAULT_WEIGHT = 1
+
+
 
   override def buildPools(): Unit = {
     var fileData: Option[(InputStream, String)] = None
     try {
-      fileData = schedulerAllocFile.map { f =>
+      fileData = schedulerAllocFile.map {
+        //优先从文件系统获取
+        f =>
         val fis = new FileInputStream(f)
         logInfo(s"Creating Fair Scheduler pools from $f")
         Some((fis, f))
       }.getOrElse {
+        //从默认路径或怄气
         val is = Utils.getSparkClassLoader.getResourceAsStream(DEFAULT_SCHEDULER_FILE)
         if (is != null) {
           logInfo(s"Creating Fair Scheduler pools from default file: $DEFAULT_SCHEDULER_FILE")
@@ -90,6 +139,7 @@ private[spark] class FairSchedulableBuilder(val rootPool: Pool, conf: SparkConf)
         }
       }
 
+      //解析文件输入流并构建调度池
       fileData.foreach { case (is, fileName) => buildFairSchedulerPool(is, fileName) }
     } catch {
       case NonFatal(t) =>
@@ -103,11 +153,14 @@ private[spark] class FairSchedulableBuilder(val rootPool: Pool, conf: SparkConf)
     }
 
     // finally create "default" pool
+    //构建默认调度池
     buildDefaultPool()
   }
 
   private def buildDefaultPool(): Unit = {
     if (rootPool.getSchedulableByName(DEFAULT_POOL_NAME) == null) {
+
+      //创建默认调度池
       val pool = new Pool(DEFAULT_POOL_NAME, DEFAULT_SCHEDULING_MODE,
         DEFAULT_MINIMUM_SHARE, DEFAULT_WEIGHT)
       rootPool.addSchedulable(pool)
@@ -137,10 +190,10 @@ private[spark] class FairSchedulableBuilder(val rootPool: Pool, conf: SparkConf)
   }
 
   private def getSchedulingModeValue(
-      poolNode: Node,
-      poolName: String,
-      defaultValue: SchedulingMode,
-      fileName: String): SchedulingMode = {
+                                      poolNode: Node,
+                                      poolName: String,
+                                      defaultValue: SchedulingMode,
+                                      fileName: String): SchedulingMode = {
 
     val xmlSchedulingMode =
       (poolNode \ SCHEDULING_MODE_PROPERTY).text.trim.toUpperCase(Locale.ROOT)
@@ -162,11 +215,11 @@ private[spark] class FairSchedulableBuilder(val rootPool: Pool, conf: SparkConf)
   }
 
   private def getIntValue(
-      poolNode: Node,
-      poolName: String,
-      propertyName: String,
-      defaultValue: Int,
-      fileName: String): Int = {
+                           poolNode: Node,
+                           poolName: String,
+                           propertyName: String,
+                           defaultValue: Int,
+                           fileName: String): Int = {
 
     val data = (poolNode \ propertyName).text.trim
     try {
@@ -180,18 +233,31 @@ private[spark] class FairSchedulableBuilder(val rootPool: Pool, conf: SparkConf)
     }
   }
 
+
+
   override def addTaskSetManager(manager: Schedulable, properties: Properties): Unit = {
+
+    /**
+      * 获取放置TaskSetManager的公平调度线程池的名称
+      */
     val poolName = if (properties != null) {
-        properties.getProperty(FAIR_SCHEDULER_PROPERTIES, DEFAULT_POOL_NAME)
-      } else {
-        DEFAULT_POOL_NAME
-      }
+      properties.getProperty(FAIR_SCHEDULER_PROPERTIES, DEFAULT_POOL_NAME)
+    } else {
+      DEFAULT_POOL_NAME
+    }
+
+
+    //获取调度池
     var parentPool = rootPool.getSchedulableByName(poolName)
+
+
     if (parentPool == null) {
       // we will create a new pool that user has configured in app
       // instead of being defined in xml file
       parentPool = new Pool(poolName, DEFAULT_SCHEDULING_MODE,
         DEFAULT_MINIMUM_SHARE, DEFAULT_WEIGHT)
+
+
       rootPool.addSchedulable(parentPool)
       logWarning(s"A job was submitted with scheduler pool $poolName, which has not been " +
         "configured. This can happen when the file that pools are read from isn't set, or " +
@@ -199,6 +265,8 @@ private[spark] class FairSchedulableBuilder(val rootPool: Pool, conf: SparkConf)
         s"configuration (schedulingMode: $DEFAULT_SCHEDULING_MODE, " +
         s"minShare: $DEFAULT_MINIMUM_SHARE, weight: $DEFAULT_WEIGHT)")
     }
+
+
     parentPool.addSchedulable(manager)
     logInfo("Added task set " + manager.name + " tasks to pool " + poolName)
   }

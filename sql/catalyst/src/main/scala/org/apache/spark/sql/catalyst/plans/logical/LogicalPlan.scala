@@ -59,6 +59,7 @@ abstract class LogicalPlan
    * can override this (e.g.
    * [[org.apache.spark.sql.catalyst.analysis.UnresolvedRelation UnresolvedRelation]]
    * should return `false`).
+   * 是否进行了解析
    */
   lazy val resolved: Boolean = expressions.forall(_.resolved) && childrenResolved
 

@@ -20,7 +20,7 @@ package org.apache.spark.shuffle.sort
 import java.util.concurrent.ConcurrentHashMap
 
 import org.apache.spark._
-import org.apache.spark.internal.{config, Logging}
+import org.apache.spark.internal.{Logging, config}
 import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.api.{ShuffleDataIO, ShuffleExecutorComponents}
 import org.apache.spark.util.Utils
@@ -68,6 +68,10 @@ import org.apache.spark.util.collection.OpenHashSet
  *    and avoids the need to allocate decompression or copying buffers during the merge.
  *
  * For more details on these optimizations, see SPARK-7081.
+ *
+ * 管理基于排序的Shuffle---输入的记录按照目标分区id排序， 然后输出到单个的map输出文件中。 reduce为了读取map输出，
+ * 需要获取map输出文件的连续内容。当map的输出数据太大已经不适合放在内存中是， 排序后的输出自己将被溢出到文件中，
+ * 这些磁盘上的文件被合并生成成最终的输出文件
  */
 private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
 
@@ -90,10 +94,13 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
 
   /**
    * Obtains a [[ShuffleHandle]] to pass to tasks.
+   * 根据条件创建不同的ShuffleHandle
    */
   override def registerShuffle[K, V, C](
       shuffleId: Int,
       dependency: ShuffleDependency[K, V, C]): ShuffleHandle = {
+
+    //需要绕开合并及排序， 则创建BypassMergeSortShuffleHandle
     if (SortShuffleWriter.shouldBypassMergeSort(conf, dependency)) {
       // If there are fewer than spark.shuffle.sort.bypassMergeThreshold partitions and we don't
       // need map-side aggregation, then write numPartitions files directly and just concatenate
@@ -102,11 +109,15 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
       // having multiple files open at a time and thus more memory allocated to buffers.
       new BypassMergeSortShuffleHandle[K, V](
         shuffleId, dependency.asInstanceOf[ShuffleDependency[K, V, V]])
+
+      //如果可以使用序列化的Shuffle， 则创建SerializedShuffleHandle
     } else if (SortShuffleManager.canUseSerializedShuffle(dependency)) {
       // Otherwise, try to buffer map outputs in a serialized form, since this is more efficient:
       new SerializedShuffleHandle[K, V](
         shuffleId, dependency.asInstanceOf[ShuffleDependency[K, V, V]])
     } else {
+
+      //其他情况， 将创建BaseShuffleHandle
       // Otherwise, buffer map outputs in a deserialized form:
       new BaseShuffleHandle(shuffleId, dependency)
     }
@@ -122,9 +133,11 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
       endPartition: Int,
       context: TaskContext,
       metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C] = {
+
     new BlockStoreShuffleReader(
       handle.asInstanceOf[BaseShuffleHandle[K, _, C]],
       startPartition, endPartition, context, metrics)
+
   }
 
   /** Get a writer for a given partition. Called on executors by map tasks. */
@@ -162,7 +175,10 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
     }
   }
 
-  /** Remove a shuffle's metadata from the ShuffleManager. */
+  /**
+   * Remove a shuffle's metadata from the ShuffleManager.
+   * 删除shuffle过程中所有map任务的数据文件和索引文件
+   * */
   override def unregisterShuffle(shuffleId: Int): Boolean = {
     Option(taskIdMapsForShuffle.remove(shuffleId)).foreach { mapTaskIds =>
       mapTaskIds.iterator.foreach { mapTaskId =>
@@ -228,6 +244,7 @@ private[spark] object SortShuffleManager extends Logging {
 /**
  * Subclass of [[BaseShuffleHandle]], used to identify when we've chosen to use the
  * serialized shuffle.
+ * 用户确定何时选择序列化Shuffle
  */
 private[spark] class SerializedShuffleHandle[K, V](
   shuffleId: Int,
@@ -238,6 +255,8 @@ private[spark] class SerializedShuffleHandle[K, V](
 /**
  * Subclass of [[BaseShuffleHandle]], used to identify when we've chosen to use the
  * bypass merge sort shuffle path.
+ *
+ * 用于确定何时绕开合并和排序的Shuffle路径
  */
 private[spark] class BypassMergeSortShuffleHandle[K, V](
   shuffleId: Int,

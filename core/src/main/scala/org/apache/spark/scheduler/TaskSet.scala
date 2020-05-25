@@ -20,15 +20,22 @@ package org.apache.spark.scheduler
 import java.util.Properties
 
 /**
- * A set of tasks submitted together to the low-level TaskScheduler, usually representing
- * missing partitions of a particular stage.
- */
+  * A set of tasks submitted together to the low-level TaskScheduler, usually representing
+  * missing partitions of a particular stage.
+  */
 private[spark] class TaskSet(
-    val tasks: Array[Task[_]],
-    val stageId: Int,
-    val stageAttemptId: Int,
-    val priority: Int,
-    val properties: Properties) {
+                            //TaskSet锁包含的Task的数组
+                              val tasks: Array[Task[_]],
+                            //Task所属的Stage的身份标识
+                              val stageId: Int,
+                            //Stage尝试的身份标识
+                              val stageAttemptId: Int,
+                            //优先级。通常以JobId作为优先级
+                              val priority: Int,
+                            //包含了与Job有个的调度， Job group、 描述等属性的Properties
+                              val properties: Properties) {
+
+  //TaskSet的身份标识
   val id: String = stageId + "." + stageAttemptId
 
   override def toString: String = "TaskSet " + id

@@ -194,9 +194,14 @@ private[rest] class StandaloneSubmitRequestServlet(
       responseServlet: HttpServletResponse): SubmitRestProtocolResponse = {
     requestMessage match {
       case submitRequest: CreateSubmissionRequest =>
+
+
         val driverDescription = buildDriverDescription(submitRequest)
+
         val response = masterEndpoint.askSync[DeployMessages.SubmitDriverResponse](
           DeployMessages.RequestSubmitDriver(driverDescription))
+
+
         val submitResponse = new CreateSubmissionResponse
         submitResponse.serverSparkVersion = sparkVersion
         submitResponse.message = response.message

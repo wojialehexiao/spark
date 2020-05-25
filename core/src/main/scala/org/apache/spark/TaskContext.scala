@@ -60,6 +60,7 @@ object TaskContext {
 
   /**
    * Unset the thread local TaskContext. Internal to Spark.
+   * 移除ThreadLocal中保存的当前任务尝试的线程的TaskContext
    */
   protected[spark] def unset(): Unit = taskContext.remove()
 

@@ -26,8 +26,7 @@ import org.apache.spark.memory.{MemoryConsumer, MemoryMode, TaskMemoryManager}
  * Spills contents of an in-memory collection to disk when the memory threshold
  * has been exceeded.
  */
-private[spark] abstract class Spillable[C](taskMemoryManager: TaskMemoryManager)
-  extends MemoryConsumer(taskMemoryManager) with Logging {
+private[spark] abstract class Spillable[C](taskMemoryManager: TaskMemoryManager) extends MemoryConsumer(taskMemoryManager) with Logging {
   /**
    * Spills the current in-memory collection to disk, and releases the memory.
    *
@@ -50,30 +49,50 @@ private[spark] abstract class Spillable[C](taskMemoryManager: TaskMemoryManager)
 
   // Initial threshold for the size of a collection before we start tracking its memory usage
   // For testing only
+  /**
+   * 对集合的内存使用进行跟踪的初始内存阈值， 默认5M
+   */
   private[this] val initialMemoryThreshold: Long =
     SparkEnv.get.conf.get(SHUFFLE_SPILL_INITIAL_MEM_THRESHOLD)
 
   // Force this collection to spill when there are this many elements in memory
   // For testing only
+  /**
+   * 当集合中有太多元素时，强制集合中的数据溢出到磁盘的阈值。
+   */
   private[this] val numElementsForceSpillThreshold: Int =
     SparkEnv.get.conf.get(SHUFFLE_SPILL_NUM_ELEMENTS_FORCE_SPILL_THRESHOLD)
 
   // Threshold for this collection's size in bytes before we start tracking its memory usage
   // To avoid a large number of small spills, initialize this to a value orders of magnitude > 0
+  /**
+   * 对集合的内存使用情况继续更正的初始阈值
+   */
   @volatile private[this] var myMemoryThreshold = initialMemoryThreshold
 
   // Number of elements read from input since last spill
+  /**
+   * 已经插入到集合的元素数量
+   */
   private[this] var _elementsRead = 0
 
   // Number of bytes spilled in total
+  /**
+   * 内存中的数据已经溢出到磁盘的字节总数
+   */
   @volatile private[this] var _memoryBytesSpilled = 0L
 
   // Number of spills
+  /**
+   * 集合产生溢出的次数
+   */
   private[this] var _spillCount = 0
 
   /**
    * Spills the current in-memory collection to disk if needed. Attempts to acquire more
    * memory before spilling.
+   *
+   * 将数据溢出到磁盘
    *
    * @param collection collection to spill to disk
    * @param currentMemory estimated size of the collection in bytes
@@ -81,23 +100,43 @@ private[spark] abstract class Spillable[C](taskMemoryManager: TaskMemoryManager)
    */
   protected def maybeSpill(collection: C, currentMemory: Long): Boolean = {
     var shouldSpill = false
+
+    //如果当前集合已经读取的元素数是32的倍数， 且集合当前内存大小大于等于myMemoryThreshold
     if (elementsRead % 32 == 0 && currentMemory >= myMemoryThreshold) {
+
+
       // Claim up to double our current memory from the shuffle memory pool
+      //为当前任务尝试获取内存
       val amountToRequest = 2 * currentMemory - myMemoryThreshold
+
+      //为当前任务尝试获取期望大小的内存，得到实际获取到的大小
       val granted = acquireMemory(amountToRequest)
+
+      //更新已经获得的大小
       myMemoryThreshold += granted
       // If we were granted too little memory to grow further (either tryToAcquire returned 0,
       // or we already had more memory than myMemoryThreshold), spill the current collection
+
       shouldSpill = currentMemory >= myMemoryThreshold
     }
+
+
     shouldSpill = shouldSpill || _elementsRead > numElementsForceSpillThreshold
+
+
     // Actually spill
+    //如果应该进行溢出
     if (shouldSpill) {
       _spillCount += 1
       logSpillage(currentMemory)
+
+      //溢出
       spill(collection)
+
+      //数据归零
       _elementsRead = 0
       _memoryBytesSpilled += currentMemory
+
       releaseMemory()
     }
     shouldSpill

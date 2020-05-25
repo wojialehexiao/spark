@@ -1230,7 +1230,7 @@ private[spark] class BlockManager(
     // to go through the local-get-or-put path.
 
 
-    //从本地货远端的BlockManager获取Block
+    //从本地或远端的BlockManager获取Block
     get[T](blockId)(classTag) match {
       case Some(block) =>
         return Left(block)
@@ -1300,6 +1300,7 @@ private[spark] class BlockManager(
                      serializerInstance: SerializerInstance,
                      bufferSize: Int,
                      writeMetrics: ShuffleWriteMetricsReporter): DiskBlockObjectWriter = {
+
     val syncWrites = conf.get(config.SHUFFLE_SYNC)
     new DiskBlockObjectWriter(file, serializerManager, serializerInstance, bufferSize,
       syncWrites, writeMetrics, blockId)

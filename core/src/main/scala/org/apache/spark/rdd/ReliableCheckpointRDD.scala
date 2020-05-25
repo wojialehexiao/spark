@@ -42,8 +42,14 @@ private[spark] class ReliableCheckpointRDD[T: ClassTag](
   ) extends CheckpointRDD[T](sc) {
 
   @transient private val hadoopConf = sc.hadoopConfiguration
+
+  //检查点对应的Hadoop路径
   @transient private val cpath = new Path(checkpointPath)
+
+
   @transient private val fs = cpath.getFileSystem(hadoopConf)
+
+  //调用broadcast广播hadoopConf后的返回
   private val broadcastedConf = sc.broadcast(new SerializableConfiguration(hadoopConf))
 
   // Fail fast if checkpoint directory does not exist
@@ -54,6 +60,8 @@ private[spark] class ReliableCheckpointRDD[T: ClassTag](
    */
   override val getCheckpointFile: Option[String] = Some(checkpointPath)
 
+  //分区计算器，优先使用_partitioner指定，ReliableCheckpointRDD.readCheckpointedPartitionerFile
+  //从检查点目录获取
   override val partitioner: Option[Partitioner] = {
     _partitioner.orElse {
       ReliableCheckpointRDD.readCheckpointedPartitionerFile(context, checkpointPath)
@@ -136,20 +144,25 @@ private[spark] object ReliableCheckpointRDD extends Logging {
     // Save to file, and reload it as an RDD
     val broadcastedConf = sc.broadcast(
       new SerializableConfiguration(sc.hadoopConfiguration))
+
     // TODO: This is expensive because it computes the RDD again unnecessarily (SPARK-8582)
     sc.runJob(originalRDD,
       writePartitionToCheckpointFile[T](checkpointDirPath.toString, broadcastedConf) _)
+
 
     if (originalRDD.partitioner.nonEmpty) {
       writePartitionerToCheckpointDir(sc, originalRDD.partitioner.get, checkpointDirPath)
     }
 
+
     val checkpointDurationMs =
       TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - checkpointStartTimeNs)
     logInfo(s"Checkpointing took $checkpointDurationMs ms.")
 
+
     val newRDD = new ReliableCheckpointRDD[T](
       sc, checkpointDirPath.toString, originalRDD.partitioner)
+
     if (newRDD.partitions.length != originalRDD.partitions.length) {
       throw new SparkException(
         "Checkpoint RDD has a different number of partitions from original RDD. Original " +
@@ -167,6 +180,7 @@ private[spark] object ReliableCheckpointRDD extends Logging {
       path: String,
       broadcastedConf: Broadcast[SerializableConfiguration],
       blockSize: Int = -1)(ctx: TaskContext, iterator: Iterator[T]): Unit = {
+
     val env = SparkEnv.get
     val outputDir = new Path(path)
     val fs = outputDir.getFileSystem(broadcastedConf.value.value)
@@ -193,6 +207,8 @@ private[spark] object ReliableCheckpointRDD extends Logging {
     val serializer = env.serializer.newInstance()
     val serializeStream = serializer.serializeStream(fileOutputStream)
     Utils.tryWithSafeFinally {
+
+      //写出到checkout文件
       serializeStream.writeAll(iterator)
     } {
       serializeStream.close()
@@ -217,6 +233,8 @@ private[spark] object ReliableCheckpointRDD extends Logging {
   /**
    * Write a partitioner to the given RDD checkpoint directory. This is done on a best-effort
    * basis; any exception while writing the partitioner is caught, logged and ignored.
+   *
+   * 将分区计算器的数据写入到检查点的目录下
    */
   private def writePartitionerToCheckpointDir(
     sc: SparkContext, partitioner: Partitioner, checkpointDirPath: Path): Unit = {

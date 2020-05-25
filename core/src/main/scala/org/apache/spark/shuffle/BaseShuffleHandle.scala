@@ -21,6 +21,7 @@ import org.apache.spark.ShuffleDependency
 
 /**
  * A basic ShuffleHandle implementation that just captures registerShuffle's parameters.
+ * 仅用于ShuffleManager的registerShuffle的参数
  */
 private[spark] class BaseShuffleHandle[K, V, C](
     shuffleId: Int,

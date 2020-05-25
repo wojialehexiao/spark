@@ -40,52 +40,70 @@ import org.apache.spark.util._
  * and sends the task output back to the driver application. A ShuffleMapTask executes the task
  * and divides the task output to multiple buckets (based on the task's partitioner).
  *
- * @param stageId id of the stage this task belongs to
- * @param stageAttemptId attempt id of the stage this task belongs to
- * @param partitionId index of the number in the RDD
- * @param localProperties copy of thread-local properties set by the user on the driver side.
+ * Task是Spark中作业运行的最小单位， 为了容错， 每个Task可能会有一到多次任务尝试。
+ * Task主要包括ShuffleMapTask，ResultTask两种
+ * 每次任务尝试都会申请单独的连续内存以执行计算
+ *
+ * @param stageId               id of the stage this task belongs to
+ * @param stageAttemptId        attempt id of the stage this task belongs to
+ * @param partitionId           index of the number in the RDD
+ * @param localProperties       copy of thread-local properties set by the user on the driver side.
  * @param serializedTaskMetrics a `TaskMetrics` that is created and serialized on the driver side
  *                              and sent to executor side.
  *
- * The parameters below are optional:
- * @param jobId id of the job this task belongs to
- * @param appId id of the app this task belongs to
- * @param appAttemptId attempt id of the app this task belongs to
- * @param isBarrier whether this task belongs to a barrier stage. Spark must launch all the tasks
- *                  at the same time for a barrier stage.
+ *                              The parameters below are optional:
+ * @param jobId                 id of the job this task belongs to
+ * @param appId                 id of the app this task belongs to
+ * @param appAttemptId          attempt id of the app this task belongs to
+ * @param isBarrier             whether this task belongs to a barrier stage. Spark must launch all the tasks
+ *                              at the same time for a barrier stage.
  */
 private[spark] abstract class Task[T](
-    val stageId: Int,
-    val stageAttemptId: Int,
-    val partitionId: Int,
-    @transient var localProperties: Properties = new Properties,
-    // The default value is only used in tests.
-    serializedTaskMetrics: Array[Byte] =
-      SparkEnv.get.closureSerializer.newInstance().serialize(TaskMetrics.registered).array(),
-    val jobId: Option[Int] = None,
-    val appId: Option[String] = None,
-    val appAttemptId: Option[String] = None,
-    val isBarrier: Boolean = false) extends Serializable {
+                                       // Task所属的Stage的身份标识
+                                       val stageId: Int,
+                                       //Stage尝试的身份标识
+                                       val stageAttemptId: Int,
+                                       //Task对应的分区索引
+                                       val partitionId: Int,
+                                       //Task执行所需属性信息
+                                       @transient var localProperties: Properties = new Properties,
+                                       // The default value is only used in tests.
+                                       //
+                                       serializedTaskMetrics: Array[Byte] =
+                                       //
+                                       SparkEnv.get.closureSerializer.newInstance().serialize(TaskMetrics.registered).array(),
+                                       //Task所属的Job的身份标识
+                                       val jobId: Option[Int] = None,
+                                       //Task所属的Application的身份标识， 即SparkContext的 _application属性
+                                       val appId: Option[String] = None,
+                                       //Task所属任务尝试的身份标识
+                                       val appAttemptId: Option[String] = None,
+                                       //
+                                       val isBarrier: Boolean = false) extends Serializable {
 
-  @transient lazy val metrics: TaskMetrics =
-    SparkEnv.get.closureSerializer.newInstance().deserialize(ByteBuffer.wrap(serializedTaskMetrics))
+  @transient lazy val metrics: TaskMetrics = SparkEnv.get.closureSerializer.newInstance().deserialize(ByteBuffer.wrap(serializedTaskMetrics))
 
   /**
    * Called by [[org.apache.spark.executor.Executor]] to run this task.
    *
    * @param taskAttemptId an identifier for this task attempt that is unique within a SparkContext.
    * @param attemptNumber how many times this task has been attempted (0 for the first attempt)
-   * @param resources other host resources (like gpus) that this task attempt can access
+   * @param resources     other host resources (like gpus) that this task attempt can access
    * @return the result of the task along with updates of Accumulators.
    */
   final def run(
-      taskAttemptId: Long,
-      attemptNumber: Int,
-      metricsSystem: MetricsSystem,
-      resources: Map[String, ResourceInformation]): T = {
+                 taskAttemptId: Long,
+                 attemptNumber: Int,
+                 metricsSystem: MetricsSystem,
+                 resources: Map[String, ResourceInformation]): T = {
+
+    //将任务尝试注册到Block
     SparkEnv.get.blockManager.registerTask(taskAttemptId)
+
+
     // TODO SPARK-24874 Allow create BarrierTaskContext based on partitions, instead of whether
     // the stage is barrier.
+    // 创建任务上下文
     val taskContext = new TaskContextImpl(
       stageId,
       stageAttemptId, // stageAttemptId and stageAttemptNumber are semantically equal
@@ -105,12 +123,17 @@ private[spark] abstract class Task[T](
     }
 
     InputFileBlockHolder.initialize()
+
+    //将任务尝试的上下文保存到ThreadLocal中
     TaskContext.setTaskContext(context)
+    //获取任务尝试的线程
     taskThread = Thread.currentThread()
 
+    //如果任务已经被kill， 则将任务尝试及其上下文标记为kill状态
     if (_reasonIfKilled != null) {
       kill(interruptThread = false, _reasonIfKilled)
     }
+
 
     new CallerContext(
       "TASK",
@@ -121,9 +144,12 @@ private[spark] abstract class Task[T](
       Option(stageId),
       Option(stageAttemptId),
       Option(taskAttemptId),
-      Option(attemptNumber)).setCurrentContext()
+      Option(attemptNumber))
+      //创建调用上下文
+      .setCurrentContext()
 
     try {
+      //调用子类实心的runTask方法运行任务
       runTask(context)
     } catch {
       case e: Throwable =>
@@ -143,6 +169,8 @@ private[spark] abstract class Task[T](
         context.markTaskCompleted(None)
       } finally {
         try {
+
+          //释放任务尝试所占用的堆内存和对外内存
           Utils.tryLogNonFatalError {
             // Release memory used by this thread for unrolling blocks
             SparkEnv.get.blockManager.memoryStore.releaseUnrollMemoryForThisTask(MemoryMode.ON_HEAP)
@@ -154,11 +182,14 @@ private[spark] abstract class Task[T](
             // not be strictly necessary, we should revisit whether we can remove this in the
             // future.
             val memoryManager = SparkEnv.get.memoryManager
-            memoryManager.synchronized { memoryManager.notifyAll() }
+            memoryManager.synchronized {
+              memoryManager.notifyAll()
+            }
           }
         } finally {
           // Though we unset the ThreadLocal here, the context member variable itself is still
           // queried directly in the TaskRunner to check for FetchFailedExceptions.
+          // 移除ThreadLocal中保存的当前任务尝试上下文
           TaskContext.unset()
           InputFileBlockHolder.unset()
         }
@@ -166,30 +197,64 @@ private[spark] abstract class Task[T](
     }
   }
 
+  /**
+   * Task内存管理器
+   */
   private var taskMemoryManager: TaskMemoryManager = _
 
   def setTaskMemoryManager(taskMemoryManager: TaskMemoryManager): Unit = {
     this.taskMemoryManager = taskMemoryManager
   }
 
+
+  /**
+   * 运行任务接口
+   * @param context
+   * @return
+   */
   def runTask(context: TaskContext): T
 
+  /**
+   * 获取当前Task偏好的位置信息
+   * @return
+   */
   def preferredLocations: Seq[TaskLocation] = Nil
 
+  /**
+   * MapOutTracker跟踪的纪元。 有TaskScheduler设置， 用于故障迁移
+   */
   // Map output tracker epoch. Will be set by TaskSetManager.
   var epoch: Long = -1
 
   // Task context, to be initialized in run().
+  /**
+   * TaskContextImpl， 被放到ThreadLocal中，保证线程安全
+   */
   @transient var context: TaskContext = _
 
   // The actual Thread on which the task is running, if any. Initialized in run().
-  @volatile @transient private var taskThread: Thread = _
+  /**
+   * 任务尝试的线程
+   */
+  @volatile
+  @transient private var taskThread: Thread = _
 
   // If non-null, this task has been killed and the reason is as specified. This is used in case
   // context is not yet initialized when kill() is invoked.
-  @volatile @transient private var _reasonIfKilled: String = null
+  /**
+   *
+   */
+  @volatile
+  @transient private var _reasonIfKilled: String = null
 
+  /**
+   * 对RDD进行反序列化花费的时间
+   */
   protected var _executorDeserializeTimeNs: Long = 0
+
+  /**
+   * 对RDD进行反序列化所花费的CPU时间。
+   */
   protected var _executorDeserializeCpuTime: Long = 0
 
   /**
@@ -201,6 +266,7 @@ private[spark] abstract class Task[T](
    * Returns the amount of time spent deserializing the RDD and function to be run.
    */
   def executorDeserializeTimeNs: Long = _executorDeserializeTimeNs
+
   def executorDeserializeCpuTime: Long = _executorDeserializeCpuTime
 
   /**
@@ -224,6 +290,8 @@ private[spark] abstract class Task[T](
    * code and user code to properly handle the flag. This function should be idempotent so it can
    * be called multiple times.
    * If interruptThread is true, we will also call Thread.interrupt() on the Task's executor thread.
+   *
+   * 杀死任务尝试线程
    */
   def kill(interruptThread: Boolean, reason: String): Unit = {
     require(reason != null)
@@ -231,6 +299,9 @@ private[spark] abstract class Task[T](
     if (context != null) {
       context.markInterrupted(reason)
     }
+
+    // 如果interruptThread为false， 则只会标记kill
+    // 否则会利用java的线程中断机制中断任务尝试线程
     if (interruptThread && taskThread != null) {
       taskThread.interrupt()
     }

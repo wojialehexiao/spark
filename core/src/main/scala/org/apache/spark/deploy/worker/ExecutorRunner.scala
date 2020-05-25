@@ -151,18 +151,30 @@ private[deploy] class ExecutorRunner(
       // Launch the process
       val arguments = appDesc.command.arguments ++ resourceFileOpt.map(f =>
         Seq("--resourcesFile", f.getAbsolutePath)).getOrElse(Seq.empty)
+
+
       val subsOpts = appDesc.command.javaOpts.map {
         Utils.substituteAppNExecIds(_, appId, execId.toString)
       }
+
+
       val subsCommand = appDesc.command.copy(arguments = arguments, javaOpts = subsOpts)
+
+
       val builder = CommandUtils.buildProcessBuilder(subsCommand, new SecurityManager(conf),
         memory, sparkHome.getAbsolutePath, substituteVariables)
+
+
       val command = builder.command()
       val redactedCommand = Utils.redactCommandLineArgs(conf, command.asScala)
         .mkString("\"", "\" \"", "\"")
+
+
       logInfo(s"Launch command: $redactedCommand")
 
       builder.directory(executorDir)
+
+
       builder.environment.put("SPARK_EXECUTOR_DIRS", appLocalDirs.mkString(File.pathSeparator))
       // In case we are running this from within the Spark Shell, avoid creating a "scala"
       // parent process for the executor command
@@ -175,10 +187,14 @@ private[deploy] class ExecutorRunner(
         } else {
           s"$webUiScheme$publicAddress:$webUiPort/logPage/?appId=$appId&executorId=$execId&logType="
         }
+
+
       builder.environment.put("SPARK_LOG_URL_STDERR", s"${baseUrl}stderr")
       builder.environment.put("SPARK_LOG_URL_STDOUT", s"${baseUrl}stdout")
 
       process = builder.start()
+
+
       val header = "Spark Executor Command: %s\n%s\n\n".format(
         redactedCommand, "=" * 40)
 
@@ -194,6 +210,8 @@ private[deploy] class ExecutorRunner(
       worker.send(ExecutorStateChanged(appId, execId, state, None, None))
       // Wait for it to exit; executor may exit with code 0 (when driver instructs it to shutdown)
       // or with nonzero exit code
+
+
       val exitCode = process.waitFor()
       state = ExecutorState.EXITED
       val message = "Command exited with code " + exitCode

@@ -110,9 +110,17 @@ public class LocalDiskShuffleMapOutputWriter implements ShuffleMapOutputWriter {
               "to unexpected behavior when using transferTo. You can set " +
               "spark.file.transferTo=false to disable this NIO feature.");
     }
+
+
     cleanUp();
+
+
     File resolvedTmp = outputTempFile != null && outputTempFile.isFile() ? outputTempFile : null;
+
+
     blockResolver.writeIndexFileAndCommit(shuffleId, mapId, partitionLengths, resolvedTmp);
+
+
     return partitionLengths;
   }
 

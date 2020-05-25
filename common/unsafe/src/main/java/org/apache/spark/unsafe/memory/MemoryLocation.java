@@ -28,6 +28,9 @@ public class MemoryLocation {
   @Nullable
   Object obj;
 
+  /**
+   * 对象的偏移量
+   */
   long offset;
 
   public MemoryLocation(@Nullable Object obj, long offset) {

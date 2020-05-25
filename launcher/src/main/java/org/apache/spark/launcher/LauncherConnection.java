@@ -36,10 +36,21 @@ abstract class LauncherConnection implements Closeable, Runnable {
 
   private static final Logger LOG = Logger.getLogger(LauncherConnection.class.getName());
 
+  /**
+   * 与LauncherServer的Socket服务端建立连接的Socket客户端
+   */
   private final Socket socket;
+
+  /**
+   * 建立在Socket的输出流上的ObjectOutputStream， 用于向服务端发送消息
+   */
   private final ObjectOutputStream out;
 
+  /**
+   * 连接是否已经关闭
+   */
   private volatile boolean closed;
+
 
   LauncherConnection(Socket socket) throws IOException {
     this.socket = socket;
@@ -47,7 +58,13 @@ abstract class LauncherConnection implements Closeable, Runnable {
     this.closed = false;
   }
 
+  /**
+   * 处理LauncherServer发送消息的抽象方法
+   * @param msg
+   * @throws IOException
+   */
   protected abstract void handle(Message msg) throws IOException;
+
 
   @Override
   public void run() {
@@ -75,6 +92,7 @@ abstract class LauncherConnection implements Closeable, Runnable {
       }
     }
   }
+
 
   protected synchronized void send(Message msg) throws IOException {
     try {

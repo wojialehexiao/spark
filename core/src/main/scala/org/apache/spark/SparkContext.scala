@@ -2134,6 +2134,7 @@ class SparkContext(config: SparkConf) extends Logging {
                               rdd: RDD[T],
                               func: (TaskContext, Iterator[T]) => U,
                               partitions: Seq[Int],
+
                               resultHandler: (Int, U) => Unit): Unit = {
     if (stopped.get()) {
       throw new IllegalStateException("SparkContext has been shutdown")

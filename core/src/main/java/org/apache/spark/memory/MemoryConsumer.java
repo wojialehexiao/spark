@@ -29,9 +29,24 @@ import org.apache.spark.unsafe.memory.MemoryBlock;
  */
 public abstract class MemoryConsumer {
 
+  /**
+   *
+   */
   protected final TaskMemoryManager taskMemoryManager;
+
+  /**
+   * 要消费的Page的大小
+   */
   private final long pageSize;
+
+  /**
+   * 内存模式
+   */
   private final MemoryMode mode;
+
+  /**
+   * 当前消费者已经使用的执行内存的大小
+   */
   protected long used;
 
   protected MemoryConsumer(TaskMemoryManager taskMemoryManager, long pageSize, MemoryMode mode) {
@@ -60,6 +75,7 @@ public abstract class MemoryConsumer {
 
   /**
    * Force spill during building.
+   * 当任务尝试没有足够的内存可用时，TaskMemoryManager将调用此方法把一些数据溢出到磁盘，以释放内存
    */
   public void spill() throws IOException {
     spill(Long.MAX_VALUE, this);
@@ -87,21 +103,33 @@ public abstract class MemoryConsumer {
    * if this `LongArray` is too large to fit in a single page. The caller side should take care of
    * these two exceptions, or make sure the `size` is small enough that won't trigger exceptions.
    *
+   * 用于分配指定大小的长整型数组
+   *
    * @throws SparkOutOfMemoryError
    * @throws TooLargePageException
    */
   public LongArray allocateArray(long size) {
+
+    //long占8个字节， 所以乘以8
     long required = size * 8L;
+
+    //分配指定大小的MemoryBlock
     MemoryBlock page = taskMemoryManager.allocatePage(required, this);
+
     if (page == null || page.size() < required) {
       throwOom(page, required);
     }
+
+    // 将required累加到used， 即更新已经使用的内存大小
     used += required;
+
+    //创建并返回LongArray
     return new LongArray(page);
   }
 
   /**
    * Frees a LongArray.
+   * 用于释放长整型数组
    */
   public void freeArray(LongArray array) {
     freePage(array.memoryBlock());

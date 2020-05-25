@@ -18,7 +18,7 @@
 package org.apache.spark.shuffle
 
 import org.apache.spark._
-import org.apache.spark.internal.{config, Logging}
+import org.apache.spark.internal.{Logging, config}
 import org.apache.spark.serializer.SerializerManager
 import org.apache.spark.storage.{BlockManager, ShuffleBlockFetcherIterator}
 import org.apache.spark.util.CompletionIterator
@@ -27,26 +27,46 @@ import org.apache.spark.util.collection.ExternalSorter
 /**
  * Fetches and reads the partitions in range [startPartition, endPartition) from a shuffle by
  * requesting them from other nodes' block stores.
+ *
+ * 用于reduce过程，从其他节点的Block文件分区由起始分区读取指定范围的数据
  */
 private[spark] class BlockStoreShuffleReader[K, C](
-    handle: BaseShuffleHandle[K, _, C],
-    startPartition: Int,
-    endPartition: Int,
-    context: TaskContext,
-    readMetrics: ShuffleReadMetricsReporter,
-    serializerManager: SerializerManager = SparkEnv.get.serializerManager,
-    blockManager: BlockManager = SparkEnv.get.blockManager,
-    mapOutputTracker: MapOutputTracker = SparkEnv.get.mapOutputTracker)
+                                                    handle: BaseShuffleHandle[K, _, C],
+                                                    // 起始分区Id
+                                                    startPartition: Int,
+                                                    // 结束分区ID
+                                                    endPartition: Int,
+                                                    //
+                                                    context: TaskContext,
+                                                    //
+                                                    readMetrics: ShuffleReadMetricsReporter,
+                                                    //
+                                                    serializerManager: SerializerManager = SparkEnv.get.serializerManager,
+                                                    //
+                                                    blockManager: BlockManager = SparkEnv.get.blockManager,
+                                                    //
+                                                    mapOutputTracker: MapOutputTracker = SparkEnv.get.mapOutputTracker)
   extends ShuffleReader[K, C] with Logging {
 
+  /**
+   * ShuffleDependency
+   */
   private val dep = handle.dependency
 
-  /** Read the combined key-values for this reduce task */
+  /**
+   * Read the combined key-values for this reduce task
+   *
+   */
   override def read(): Iterator[Product2[K, C]] = {
+
+
     val wrappedStreams = new ShuffleBlockFetcherIterator(
       context,
       blockManager.blockStoreClient,
       blockManager,
+
+      //获取当前reduce任务所需的map任务中间结果输出数据的BlockManager的BlockManagerId
+      //以及每个Block块的BlockId大小
       mapOutputTracker.getMapSizesByExecutorId(handle.shuffleId, startPartition, endPartition,
         SparkEnv.get.conf.get(config.SHUFFLE_USE_OLD_FETCH_PROTOCOL)),
       serializerManager.wrapStream,
@@ -61,6 +81,7 @@ private[spark] class BlockStoreShuffleReader[K, C](
 
     val serializerInstance = dep.serializer.newInstance()
 
+
     // Create a key/value iterator for each stream
     val recordIter = wrappedStreams.flatMap { case (blockId, wrappedStream) =>
       // Note: the asKeyValueIterator below wraps a key/value iterator inside of a
@@ -68,6 +89,7 @@ private[spark] class BlockStoreShuffleReader[K, C](
       // underlying InputStream when all records have been read.
       serializerInstance.deserializeStream(wrappedStream).asKeyValueIterator
     }
+
 
     // Update the context task metrics for each record read.
     val metricIter = CompletionIterator[(Any, Any), Iterator[(Any, Any)]](
@@ -77,40 +99,59 @@ private[spark] class BlockStoreShuffleReader[K, C](
       },
       context.taskMetrics().mergeShuffleReadMetrics())
 
+
     // An interruptible iterator must be used here in order to support task cancellation
     val interruptibleIter = new InterruptibleIterator[(Any, Any)](context, metricIter)
 
     val aggregatedIter: Iterator[Product2[K, C]] = if (dep.aggregator.isDefined) {
+
+      //如果指定了聚合函数，并且允许map端合并，在reduce端聚合
       if (dep.mapSideCombine) {
         // We are reading values that are already combined
         val combinedKeyValuesIterator = interruptibleIter.asInstanceOf[Iterator[(K, C)]]
         dep.aggregator.get.combineCombinersByKey(combinedKeyValuesIterator, context)
+
+
       } else {
         // We don't know the value type, but also don't care -- the dependency *should*
         // have made sure its compatible w/ this aggregator, which will convert the value
-        // type to the combined type C
+        // type
+        // to the combined type C
+        //如果指定了聚合函数，并且不允许map端合并，在reduce对数据缓存
         val keyValuesIterator = interruptibleIter.asInstanceOf[Iterator[(K, Nothing)]]
         dep.aggregator.get.combineValuesByKey(keyValuesIterator, context)
       }
     } else {
+      //如果没有指定聚合函数， 那么不进行任何操作
       interruptibleIter.asInstanceOf[Iterator[Product2[K, C]]]
     }
 
     // Sort the output if there is a sort ordering defined.
     val resultIter = dep.keyOrdering match {
+
+        //如果指定了排序函数创建ExternalSorter
       case Some(keyOrd: Ordering[K]) =>
+
         // Create an ExternalSorter to sort the data.
-        val sorter =
-          new ExternalSorter[K, C, C](context, ordering = Some(keyOrd), serializer = dep.serializer)
+        val sorter = new ExternalSorter[K, C, C](context, ordering = Some(keyOrd), serializer = dep.serializer)
+
+
+        //对数据进行排序
         sorter.insertAll(aggregatedIter)
+
+
         context.taskMetrics().incMemoryBytesSpilled(sorter.memoryBytesSpilled)
         context.taskMetrics().incDiskBytesSpilled(sorter.diskBytesSpilled)
         context.taskMetrics().incPeakExecutionMemory(sorter.peakMemoryUsedBytes)
+
         // Use completion callback to stop sorter if task was finished/cancelled.
         context.addTaskCompletionListener[Unit](_ => {
           sorter.stop()
         })
+
         CompletionIterator[Product2[K, C], Iterator[Product2[K, C]]](sorter.iterator, sorter.stop())
+
+        //如果没有指定， 返回aggregatedIter
       case None =>
         aggregatedIter
     }

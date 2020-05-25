@@ -93,6 +93,11 @@ abstract class Expression extends TreeNode[Expression] {
    *  - A [[Not]], [[IsNull]], or [[IsNotNull]] is foldable if its child is foldable
    *  - A [[Literal]] is foldable
    *  - A [[Cast]] or [[UnaryMinus]] is foldable if its child is foldable
+   *
+   *  用来标记表达式能否在执行计划之前直接静态计算。
+   *  foldable为true的情况有两种
+   *  1. 表达式为Literal类型，
+   *  2.当且仅当其子表达式中foldable都为true时，在算子树中表达式可以预先直接折叠处理
    */
   def foldable: Boolean = false
 
@@ -109,13 +114,23 @@ abstract class Expression extends TreeNode[Expression] {
    *
    * An example would be `SparkPartitionID` that relies on the partition id returned by TaskContext.
    * By default leaf expressions are deterministic as Nil.forall(_.deterministic) returns true.
+   *
+   * 该属性用来标记表达式是否为确定性，即每次执行eval函数的输出是否都相同。
+   * 考虑到Spark分布式环境中数据shuffle操作带来的不确定性， 以及某些表达式（如Randy等）
+   * 本身具有不确定性， 该属性对于算子树优化中判断谓词能否下推等很有必要
    */
   lazy val deterministic: Boolean = children.forall(_.deterministic)
 
+
+  /**
+   * 用来标记表达式能否输出null， 一般在生成的java代码中对相关条件进行判断
+   * @return
+   */
   def nullable: Boolean
 
   /**
    * Workaround scala compiler so that we can call super on lazy vals
+   * 该表达式涉及到的属性， 默认情况为所有子节点中属性的集合
    */
   @transient
   private lazy val _references: AttributeSet =
@@ -129,6 +144,8 @@ abstract class Expression extends TreeNode[Expression] {
   /**
    * Returns an [[ExprCode]], that contains the Java source code to generate the result of
    * evaluating the expression on an input row.
+   *
+   * 用于生成表达式对应的JAVA代码
    *
    * @param ctx a [[CodegenContext]]
    * @return [[ExprCode]]
@@ -190,6 +207,8 @@ abstract class Expression extends TreeNode[Expression] {
    * The default behavior is to call the eval method of the expression. Concrete expression
    * implementations should override this to do actual code generation.
    *
+   * 用于生成表达式对应的JAVA代码
+   *
    * @param ctx a [[CodegenContext]]
    * @param ev an [[ExprCode]] with unique terms.
    * @return an [[ExprCode]] containing the Java source code to generate the given expression
@@ -224,6 +243,9 @@ abstract class Expression extends TreeNode[Expression] {
    *
    * `deterministic` expressions where `this.canonicalized == other.canonicalized` will always
    * evaluate to the same result.
+   *
+   * 返回经过规范化处理后的表达式。 规范化处理会在确保输出结果相同的前提下
+   * 通过一些规则对表达式进行重写， 详见 Canonicalize
    */
   lazy val canonicalized: Expression = {
     val canonicalizedChildren = children.map(_.canonicalized)
@@ -235,6 +257,8 @@ abstract class Expression extends TreeNode[Expression] {
    * cosmetically (i.e. capitalization of names in attributes may be different).
    *
    * See [[Canonicalize]] for more details.
+   *
+   * 判断两个表达式在语义上是否等价。
    */
   def semanticEquals(other: Expression): Boolean =
     deterministic && other.deterministic && canonicalized == other.canonicalized
@@ -293,6 +317,10 @@ abstract class Expression extends TreeNode[Expression] {
  * An expression that cannot be evaluated. These expressions don't live past analysis or
  * optimization time (e.g. Star) and should not be evaluated during query planning and
  * execution.
+ *
+ * 非可执行的表达式， 即调用eval函数会抛出异常。
+ * 该接口主要用于生命周期不超过逻辑计划解析和优化节点的表达式
+ * 例如Star(*) 在解析阶段就会被展开成具体的列集合
  */
 trait Unevaluable extends Expression {
 
@@ -366,6 +394,9 @@ trait NonSQLExpression extends Expression {
 
 /**
  * An expression that is nondeterministic.
+ *
+ * 具有不确定性的Expression， 其中deterministic、foldable
+ * 都为false
  */
 trait Nondeterministic extends Expression {
   final override lazy val deterministic: Boolean = false
@@ -428,6 +459,8 @@ trait Stateful extends Nondeterministic {
 
 /**
  * A leaf expression, i.e. one without any child expressions.
+ * 叶子节点类型表达式， 即不包含任何子节点，因此children返回Nil
+ * 该类型Expresstion目前有30多个， 包括Star， CurrentDate
  */
 abstract class LeafExpression extends Expression {
 
@@ -438,6 +471,9 @@ abstract class LeafExpression extends Expression {
 /**
  * An expression with one input and one output. The output is by default evaluated to null
  * if the input is evaluated to null.
+ *
+ * 一元类型表达式， 只有一个子节点。 这种类型的表达式总量110多中， 较为庞大
+ * 其输入涉及一个子节点， 例如Abs、 UpCast等
  */
 abstract class UnaryExpression extends Expression {
 
@@ -523,6 +559,8 @@ abstract class UnaryExpression extends Expression {
 /**
  * An expression with two inputs and one output. The output is by default evaluated to null
  * if any input is evaluated to null.
+ *
+ * 二元类型表达式， 包含两个子节点。大概有80多种。 加减乘除等
  */
 abstract class BinaryExpression extends Expression {
 
@@ -667,6 +705,8 @@ object BinaryOperator {
 /**
  * An expression with three inputs and one output. The output is by default evaluated to null
  * if any input is evaluated to null.
+ *
+ * 三元运算符， 大约10中， 例如subString等
  */
 abstract class TernaryExpression extends Expression {
 

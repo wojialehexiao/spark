@@ -19,32 +19,30 @@ package org.apache.spark.deploy.worker
 
 import java.io.{File, IOException}
 import java.text.SimpleDateFormat
-import java.util.{Date, Locale, UUID}
-import java.util.concurrent._
-import java.util.concurrent.{Future => JFuture, ScheduledFuture => JScheduledFuture}
+import java.util.concurrent.{Future => JFuture, ScheduledFuture => JScheduledFuture, _}
 import java.util.function.Supplier
+import java.util.{Date, Locale, UUID}
 
-import scala.collection.mutable.{HashMap, HashSet, LinkedHashMap}
-import scala.concurrent.ExecutionContext
-import scala.util.Random
-import scala.util.control.NonFatal
-
-import org.apache.spark.{SecurityManager, SparkConf}
-import org.apache.spark.deploy.{Command, ExecutorDescription, ExecutorState}
 import org.apache.spark.deploy.DeployMessages._
-import org.apache.spark.deploy.ExternalShuffleService
 import org.apache.spark.deploy.StandaloneResourceUtils._
-import org.apache.spark.deploy.master.{DriverState, Master, WorkerResourceInfo}
+import org.apache.spark.deploy.master.{DriverState, Master}
 import org.apache.spark.deploy.worker.ui.WorkerWebUI
-import org.apache.spark.internal.{config, Logging}
+import org.apache.spark.deploy.{Command, ExecutorDescription, ExecutorState, ExternalShuffleService}
 import org.apache.spark.internal.config.Tests.IS_TESTING
 import org.apache.spark.internal.config.UI._
 import org.apache.spark.internal.config.Worker._
+import org.apache.spark.internal.{Logging, config}
 import org.apache.spark.metrics.{MetricsSystem, MetricsSystemInstances}
 import org.apache.spark.resource.ResourceInformation
 import org.apache.spark.resource.ResourceUtils._
 import org.apache.spark.rpc._
 import org.apache.spark.util.{SignalUtils, SparkUncaughtExceptionHandler, ThreadUtils, Utils}
+import org.apache.spark.{SecurityManager, SparkConf}
+
+import scala.collection.mutable.{HashMap, HashSet, LinkedHashMap}
+import scala.concurrent.ExecutionContext
+import scala.util.Random
+import scala.util.control.NonFatal
 
 private[deploy] class Worker(
     override val rpcEnv: RpcEnv,
@@ -89,10 +87,12 @@ private[deploy] class Worker(
   private val INITIAL_REGISTRATION_RETRIES = 6
   private val TOTAL_REGISTRATION_RETRIES = INITIAL_REGISTRATION_RETRIES + 10
   private val FUZZ_MULTIPLIER_INTERVAL_LOWER_BOUND = 0.500
+
   private val REGISTRATION_RETRY_FUZZ_MULTIPLIER = {
     val randomNumberGenerator = new Random(UUID.randomUUID.getMostSignificantBits)
     randomNumberGenerator.nextDouble + FUZZ_MULTIPLIER_INTERVAL_LOWER_BOUND
   }
+
   private val INITIAL_REGISTRATION_RETRY_INTERVAL_SECONDS = (math.round(10 *
     REGISTRATION_RETRY_FUZZ_MULTIPLIER))
   private val PROLONGED_REGISTRATION_RETRY_INTERVAL_SECONDS = (math.round(60
@@ -203,14 +203,21 @@ private[deploy] class Worker(
       host, port, cores, Utils.megabytesToString(memory)))
     logInfo(s"Running Spark version ${org.apache.spark.SPARK_VERSION}")
     logInfo("Spark home: " + sparkHome)
+
     createWorkDir()
+
     startExternalShuffleService()
+
     releaseResourcesOnInterrupt()
+
     setupWorkerResources()
+
     webUi = new WorkerWebUI(this, workDir, webUiPort)
     webUi.bind()
 
     workerWebUiUrl = s"${webUi.scheme}$publicAddress:${webUi.boundPort}"
+
+    //注册到master
     registerWithMaster()
 
     metricsSystem.registerSource(workerSource)
@@ -398,13 +405,19 @@ private[deploy] class Worker(
     registrationRetryTimer match {
       case None =>
         registered = false
+
+        // 向所有maser注册
         registerMasterFutures = tryRegisterAllMasters()
+
         connectionAttemptCount = 0
+
+        //周期性ReregisterWithMaster
         registrationRetryTimer = Some(forwardMessageScheduler.scheduleAtFixedRate(
           () => Utils.tryLogNonFatalError { Option(self).foreach(_.send(ReregisterWithMaster)) },
           INITIAL_REGISTRATION_RETRY_INTERVAL_SECONDS,
           INITIAL_REGISTRATION_RETRY_INTERVAL_SECONDS,
           TimeUnit.SECONDS))
+
       case Some(_) =>
         logInfo("Not spawning another attempt to register with the master, since there is an" +
           " attempt scheduled already.")
@@ -435,8 +448,11 @@ private[deploy] class Worker(
   }
 
   private def handleRegisterResponse(msg: RegisterWorkerResponse): Unit = synchronized {
+
     msg match {
+
       case RegisteredWorker(masterRef, masterWebUiUrl, masterAddress, duplicate) =>
+
         val preferredMasterAddress = if (preferConfiguredMasterAddress) {
           masterAddress.toSparkURL
         } else {
@@ -452,10 +468,17 @@ private[deploy] class Worker(
 
         logInfo(s"Successfully registered with master $preferredMasterAddress")
         registered = true
+
+        //切换master
         changeMaster(masterRef, masterWebUiUrl, masterAddress)
+
+        //开启心跳
         forwardMessageScheduler.scheduleAtFixedRate(
           () => Utils.tryLogNonFatalError { self.send(SendHeartbeat) },
           0, HEARTBEAT_MILLIS, TimeUnit.MILLISECONDS)
+
+
+        //定时清理
         if (CLEANUP_ENABLED) {
           logInfo(
             s"Worker cleanup enabled; old application directories will be deleted in: $workDir")
@@ -467,6 +490,8 @@ private[deploy] class Worker(
         val execs = executors.values.map { e =>
           new ExecutorDescription(e.appId, e.execId, e.cores, e.state)
         }
+
+        // 汇报状态
         masterRef.send(WorkerLatestState(workerId, execs.toList, drivers.keys.toSeq))
 
       case RegisterWorkerFailed(message) =>
@@ -482,6 +507,8 @@ private[deploy] class Worker(
   }
 
   override def receive: PartialFunction[Any, Unit] = synchronized {
+
+    //注册的响应
     case msg: RegisterWorkerResponse =>
       handleRegisterResponse(msg)
 
@@ -601,6 +628,7 @@ private[deploy] class Worker(
             appLocalDirs,
             ExecutorState.LAUNCHING,
             resources_)
+
           executors(appId + "/" + execId) = manager
           manager.start()
           coresUsed += cores_
@@ -836,25 +864,32 @@ private[deploy] object Worker extends Logging {
   private val SSL_NODE_LOCAL_CONFIG_PATTERN = """\-Dspark\.ssl\.useNodeLocalConf\=(.+)""".r
 
   def main(argStrings: Array[String]): Unit = {
+
     Thread.setDefaultUncaughtExceptionHandler(new SparkUncaughtExceptionHandler(
       exitOnUncaughtException = false))
+
     Utils.initDaemon(log)
+
     val conf = new SparkConf
     val args = new WorkerArguments(argStrings, conf)
+
     val rpcEnv = startRpcEnvAndEndpoint(args.host, args.port, args.webUiPort, args.cores,
       args.memory, args.masters, args.workDir, conf = conf,
       resourceFileOpt = conf.get(SPARK_WORKER_RESOURCE_FILE))
+
     // With external shuffle service enabled, if we request to launch multiple workers on one host,
     // we can only successfully launch the first worker and the rest fails, because with the port
     // bound, we may launch no more than one external shuffle service on each host.
     // When this happens, we should give explicit reason of failure instead of fail silently. For
     // more detail see SPARK-20989.
     val externalShuffleServiceEnabled = conf.get(config.SHUFFLE_SERVICE_ENABLED)
+
     val sparkWorkerInstances = scala.sys.env.getOrElse("SPARK_WORKER_INSTANCES", "1").toInt
     require(externalShuffleServiceEnabled == false || sparkWorkerInstances <= 1,
       "Starting multiple workers on one host is failed because we may launch no more than one " +
         "external shuffle service on each host, please set spark.shuffle.service.enabled to " +
         "false or set SPARK_WORKER_INSTANCES to 1 to resolve the conflict.")
+
     rpcEnv.awaitTermination()
   }
 

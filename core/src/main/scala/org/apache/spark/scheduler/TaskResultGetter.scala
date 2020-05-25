@@ -20,48 +20,72 @@ package org.apache.spark.scheduler
 import java.nio.ByteBuffer
 import java.util.concurrent.{ExecutorService, RejectedExecutionException}
 
-import scala.language.existentials
-import scala.util.control.NonFatal
-
-import org.apache.spark._
 import org.apache.spark.TaskState.TaskState
+import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.serializer.SerializerInstance
 import org.apache.spark.util.{LongAccumulator, ThreadUtils, Utils}
 
+import scala.language.existentials
+import scala.util.control.NonFatal
+
 /**
- * Runs a thread pool that deserializes and remotely fetches (if necessary) task results.
- */
+  * Runs a thread pool that deserializes and remotely fetches (if necessary) task results.
+  * 用于对序列化的Task执行结果进行反序列化， 以得到Task执行结果。
+  * TaskResultGetter也可以远程获取Task执行结果
+  */
 private[spark] class TaskResultGetter(sparkEnv: SparkEnv, scheduler: TaskSchedulerImpl)
   extends Logging {
+
 
   private val THREADS = sparkEnv.conf.getInt("spark.resultGetter.threads", 4)
 
   // Exposed for testing.
+  /**
+    * 使用线程池
+    */
   protected val getTaskResultExecutor: ExecutorService =
     ThreadUtils.newDaemonFixedThreadPool(THREADS, "task-result-getter")
 
   // Exposed for testing.
+  /**
+    * SerializerInstance本地缓存，
+    */
   protected val serializer = new ThreadLocal[SerializerInstance] {
     override def initialValue(): SerializerInstance = {
       sparkEnv.closureSerializer.newInstance()
     }
   }
 
+  /**
+    * SerializerInstance本地缓存，保证反序列化安全
+    */
   protected val taskResultSerializer = new ThreadLocal[SerializerInstance] {
     override def initialValue(): SerializerInstance = {
       sparkEnv.serializer.newInstance()
     }
   }
 
+  /**
+    * 处理执行成功的Task的执行结果
+    * @param taskSetManager
+    * @param tid
+    * @param serializedData
+    */
   def enqueueSuccessfulTask(
-      taskSetManager: TaskSetManager,
-      tid: Long,
-      serializedData: ByteBuffer): Unit = {
+                             taskSetManager: TaskSetManager,
+                             tid: Long,
+                             serializedData: ByteBuffer): Unit = {
+
     getTaskResultExecutor.execute(new Runnable {
       override def run(): Unit = Utils.logUncaughtExceptions {
         try {
+
+          //对Task的执行结果反序列化
           val (result, size) = serializer.get().deserialize[TaskResult[_]](serializedData) match {
+
+              //如果类型为DirectTaskResult， 说明执行结果保存在DirectTaskResult中，
+              //只需要对保存的数据进行反序列化即可
             case directResult: DirectTaskResult[_] =>
               if (!taskSetManager.canFetchMoreResults(serializedData.limit())) {
                 // kill the task so that it will not become zombie task
@@ -72,9 +96,15 @@ private[spark] class TaskResultGetter(sparkEnv: SparkEnv, scheduler: TaskSchedul
               // deserialize "value" without holding any lock so that it won't block other threads.
               // We should call it here, so that when it's called again in
               // "TaskSetManager.handleSuccessfulTask", it does not need to deserialize the value.
+              //获取Task执行结果
               directResult.value(taskResultSerializer.get())
               (directResult, serializedData.limit())
+
+
+
+              //如果类型为IndirectTaskResult， 说明Task的执行结果没有保存在IndirectTaskResult
             case IndirectTaskResult(blockId, size) =>
+
               if (!taskSetManager.canFetchMoreResults(size)) {
                 // dropped by executor if size is larger than maxResultSize
                 sparkEnv.blockManager.master.removeBlock(blockId)
@@ -83,9 +113,17 @@ private[spark] class TaskResultGetter(sparkEnv: SparkEnv, scheduler: TaskSchedul
                   "Tasks result size has exceeded maxResultSize"))
                 return
               }
+
+
               logDebug("Fetching indirect task result for TID %s".format(tid))
+
+              // 需要调用TaskSchedulearImpl的handleTaskGettingResult方法
+              // 向DAGSchedulerEventProcessLoop投递GettingResultEvent事件
               scheduler.handleTaskGettingResult(taskSetManager, tid)
+
+              //下载结果
               val serializedTaskResult = sparkEnv.blockManager.getRemoteBytes(blockId)
+
               if (serializedTaskResult.isEmpty) {
                 /* We won't be able to get the task result if the machine that ran the task failed
                  * between when the task ended and when we tried to fetch the result, or if the
@@ -94,10 +132,16 @@ private[spark] class TaskResultGetter(sparkEnv: SparkEnv, scheduler: TaskSchedul
                   taskSetManager, tid, TaskState.FINISHED, TaskResultLost)
                 return
               }
+
+
               val deserializedResult = serializer.get().deserialize[DirectTaskResult[_]](
                 serializedTaskResult.get.toByteBuffer)
+
+
               // force deserialization of referenced value
+              //对下载的数据反序列化得到Task的执行结果
               deserializedResult.value(taskResultSerializer.get())
+
               sparkEnv.blockManager.master.removeBlock(blockId)
               (deserializedResult, size)
           }
@@ -130,17 +174,30 @@ private[spark] class TaskResultGetter(sparkEnv: SparkEnv, scheduler: TaskSchedul
     })
   }
 
+
+  /**
+    * 处理执行失败的Task的执行结果
+    * @param taskSetManager
+    * @param tid
+    * @param taskState
+    * @param serializedData
+    */
   def enqueueFailedTask(taskSetManager: TaskSetManager, tid: Long, taskState: TaskState,
-    serializedData: ByteBuffer): Unit = {
-    var reason : TaskFailedReason = UnknownReason
+                        serializedData: ByteBuffer): Unit = {
+    var reason: TaskFailedReason = UnknownReason
     try {
       getTaskResultExecutor.execute(() => Utils.logUncaughtExceptions {
         val loader = Utils.getContextOrSparkClassLoader
         try {
+
           if (serializedData != null && serializedData.limit() > 0) {
+
+            //对结果反序列化，得到失败原因
             reason = serializer.get().deserialize[TaskFailedReason](
               serializedData, loader)
           }
+
+
         } catch {
           case _: ClassNotFoundException =>
             // Log an error but keep going here -- the task failed, so not catastrophic
@@ -152,12 +209,13 @@ private[spark] class TaskResultGetter(sparkEnv: SparkEnv, scheduler: TaskSchedul
           // If there's an error while deserializing the TaskEndReason, this Runnable
           // will die. Still tell the scheduler about the task failure, to avoid a hang
           // where the scheduler thinks the task is still running.
+          //处理失败的Task， 将失败的Task重新放入待处理Task列表，并通知DAGScheduler重新调度。
           scheduler.handleFailedTask(taskSetManager, tid, taskState, reason)
         }
       })
     } catch {
       case e: RejectedExecutionException if sparkEnv.isStopped =>
-        // ignore it
+      // ignore it
     }
   }
 

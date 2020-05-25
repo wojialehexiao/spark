@@ -22,6 +22,9 @@ import org.apache.spark.sql.catalyst.expressions.codegen.Block._
 
 /**
  * A trait that can be used to provide a fallback mode for expression code generation.
+ *
+ * 不支持代码生成的表达式。某些表达式涉及第三方实现等情况， 无法生成java代码，
+ * 此时通过CodegenFallback直接调用，
  */
 trait CodegenFallback extends Expression {
 

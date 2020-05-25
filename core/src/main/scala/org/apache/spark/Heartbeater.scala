@@ -39,7 +39,10 @@ private[spark] class Heartbeater(
 
   /** Schedules a task to report a heartbeat. */
   def start(): Unit = {
+
+
     // Wait a random interval so the heartbeats don't end up in sync
+    // 添加一定的随机值
     val initialDelay = intervalMs + (math.random * intervalMs).asInstanceOf[Int]
 
     val heartbeatTask = new Runnable() {

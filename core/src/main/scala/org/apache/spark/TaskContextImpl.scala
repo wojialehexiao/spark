@@ -18,10 +18,8 @@
 package org.apache.spark
 
 import java.util.Properties
+
 import javax.annotation.concurrent.GuardedBy
-
-import scala.collection.mutable.ArrayBuffer
-
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.TaskMemoryManager
@@ -30,6 +28,8 @@ import org.apache.spark.metrics.source.Source
 import org.apache.spark.resource.ResourceInformation
 import org.apache.spark.shuffle.FetchFailedException
 import org.apache.spark.util._
+
+import scala.collection.mutable.ArrayBuffer
 
 
 /**
@@ -43,33 +43,54 @@ import org.apache.spark.util._
  * `TaskMetrics` & `MetricsSystem` objects are not thread safe.
  */
 private[spark] class TaskContextImpl(
-    override val stageId: Int,
-    override val stageAttemptNumber: Int,
-    override val partitionId: Int,
-    override val taskAttemptId: Long,
-    override val attemptNumber: Int,
-    override val taskMemoryManager: TaskMemoryManager,
-    localProperties: Properties,
-    @transient private val metricsSystem: MetricsSystem,
-    // The default value is only used in tests.
-    override val taskMetrics: TaskMetrics = TaskMetrics.empty,
-    override val resources: Map[String, ResourceInformation] = Map.empty)
-  extends TaskContext
-  with Logging {
+                                      //Task所属的Stage的身份标识
+                                      override val stageId: Int,
+                                      //
+                                      override val stageAttemptNumber: Int,
+                                      // Task对应的分区索引
+                                      override val partitionId: Int,
+                                      // 任务尝试的身份标识
+                                      override val taskAttemptId: Long,
+                                      //任务尝试号
+                                      override val attemptNumber: Int,
+                                      //Task内存管理器
+                                      override val taskMemoryManager: TaskMemoryManager,
+                                      //
+                                      localProperties: Properties,
+                                      //度量系统
+                                      @transient private val metricsSystem: MetricsSystem,
+                                      // The default value is only used in tests.
+                                      //用于跟踪Task执行过程的度量信息
+                                      override val taskMetrics: TaskMetrics = TaskMetrics.empty,
+                                      //
+                                      override val resources: Map[String, ResourceInformation] = Map.empty)
+  extends TaskContext with Logging {
 
-  /** List of callback functions to execute when the task completes. */
+  /**
+   * List of callback functions to execute when the task completes.
+   * 保存任务执行完成后需要回调的TaskCompletionListener数组
+   * */
   @transient private val onCompleteCallbacks = new ArrayBuffer[TaskCompletionListener]
 
-  /** List of callback functions to execute when the task fails. */
+  /**
+   * List of callback functions to execute when the task fails.
+   * 保存任务执行失败后需要回调的TaskFailureListener数组
+   * */
   @transient private val onFailureCallbacks = new ArrayBuffer[TaskFailureListener]
 
   // If defined, the corresponding task has been killed and this option contains the reason.
   @volatile private var reasonIfKilled: Option[String] = None
 
   // Whether the task has completed.
+  /**
+   * 任务是否完成
+   */
   private var completed: Boolean = false
 
   // Whether the task has failed.
+  /**
+   * 任务是否失败
+   */
   private var failed: Boolean = false
 
   // Throwable that caused the task to fail
@@ -81,7 +102,7 @@ private[spark] class TaskContextImpl(
 
   @GuardedBy("this")
   override def addTaskCompletionListener(listener: TaskCompletionListener)
-      : this.type = synchronized {
+  : this.type = synchronized {
     if (completed) {
       listener.onTaskCompletion(this)
     } else {
@@ -92,7 +113,7 @@ private[spark] class TaskContextImpl(
 
   @GuardedBy("this")
   override def addTaskFailureListener(listener: TaskFailureListener)
-      : this.type = synchronized {
+  : this.type = synchronized {
     if (failed) {
       listener.onTaskFailure(this, failure)
     } else {
@@ -101,6 +122,11 @@ private[spark] class TaskContextImpl(
     this
   }
 
+
+  /**
+   * 标记Task执行失败。
+   * @param error
+   */
   @GuardedBy("this")
   private[spark] override def markTaskFailed(error: Throwable): Unit = synchronized {
     if (failed) return
@@ -110,6 +136,7 @@ private[spark] class TaskContextImpl(
       _.onTaskFailure(this, error)
     }
   }
+
 
   @GuardedBy("this")
   private[spark] override def markTaskCompleted(error: Option[Throwable]): Unit = synchronized {
@@ -121,10 +148,10 @@ private[spark] class TaskContextImpl(
   }
 
   private def invokeListeners[T](
-      listeners: Seq[T],
-      name: String,
-      error: Option[Throwable])(
-      callback: T => Unit): Unit = {
+                                  listeners: Seq[T],
+                                  name: String,
+                                  error: Option[Throwable])(
+                                  callback: T => Unit): Unit = {
     val errorMsgs = new ArrayBuffer[String](2)
     // Process callbacks in the reverse order of registration
     listeners.reverse.foreach { listener =>
@@ -144,6 +171,7 @@ private[spark] class TaskContextImpl(
   private[spark] override def markInterrupted(reason: String): Unit = {
     reasonIfKilled = Some(reason)
   }
+
 
   private[spark] override def killTaskIfInterrupted(): Unit = {
     val reason = reasonIfKilled

@@ -85,10 +85,14 @@ private[spark] class SparkSubmit extends Logging {
     if (appArgs.verbose) {
       logInfo(appArgs.toString)
     }
+
+
     appArgs.action match {
       case SparkSubmitAction.SUBMIT => submit(appArgs, uninitLog)
       case SparkSubmitAction.KILL => kill(appArgs)
+
       case SparkSubmitAction.REQUEST_STATUS => requestStatus(appArgs)
+
       case SparkSubmitAction.PRINT_VERSION => printVersion()
     }
   }
@@ -956,6 +960,7 @@ object SparkSubmit extends CommandLineUtils with Logging {
     "org.apache.spark.deploy.k8s.submit.KubernetesClientApplication"
 
   override def main(args: Array[String]): Unit = {
+
     val submit = new SparkSubmit() {
       self =>
 

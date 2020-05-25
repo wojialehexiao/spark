@@ -394,8 +394,12 @@ abstract class RDD[T: ClassTag](
     }) match {
       case Left(blockResult) =>
         if (readCachedBlock) {
+
           val existingMetrics = context.taskMetrics().inputMetrics
+
           existingMetrics.incBytesRead(blockResult.bytes)
+
+
           new InterruptibleIterator[T](context, blockResult.data.asInstanceOf[Iterator[T]]) {
             override def next(): T = {
               existingMetrics.incRecordsRead(1)
@@ -1106,6 +1110,7 @@ abstract class RDD[T: ClassTag](
     */
   def reduce(f: (T, T) => T): T = withScope {
     val cleanF = sc.clean(f)
+
     val reducePartition: Iterator[T] => Option[T] = iter => {
       if (iter.hasNext) {
         Some(iter.reduceLeft(cleanF))
@@ -1113,6 +1118,7 @@ abstract class RDD[T: ClassTag](
         None
       }
     }
+
     var jobResult: Option[T] = None
     val mergeResult = (_: Int, taskResult: Option[T]) => {
       if (taskResult.isDefined) {
@@ -1856,6 +1862,8 @@ abstract class RDD[T: ClassTag](
   /**
     * Changes the dependencies of this RDD from its original parents to a new RDD (`newRDD`)
     * created from the checkpoint file, and forget its old dependencies and partitions.
+   *
+   * 清空依赖， 现在已经有了CheckpointRDD，之前的依赖不需要了
     */
   private[spark] def markCheckpointed(): Unit = stateLock.synchronized {
     clearDependencies()

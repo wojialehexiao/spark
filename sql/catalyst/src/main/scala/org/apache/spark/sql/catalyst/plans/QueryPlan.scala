@@ -20,7 +20,6 @@ package org.apache.spark.sql.catalyst.plans
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.trees.{CurrentOrigin, TreeNode, TreeNodeTag}
-import org.apache.spark.sql.catalyst.util.StringUtils.PlanStringConcat
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructType}
 
@@ -33,28 +32,36 @@ abstract class QueryPlan[PlanType <: QueryPlan[PlanType]] extends TreeNode[PlanT
    */
   def conf: SQLConf = SQLConf.get
 
+  /**
+   * 输出属性， 由子类实现
+   * @return
+   */
   def output: Seq[Attribute]
 
   /**
    * Returns the set of attributes that are output by this node.
+   * 将output返回进行封装
    */
   @transient
   lazy val outputSet: AttributeSet = AttributeSet(output)
 
   /**
    * The set of all attributes that are input to this operator by its children.
+   * 所有子节点的输入
    */
   def inputSet: AttributeSet =
     AttributeSet(children.flatMap(_.asInstanceOf[QueryPlan[PlanType]].output))
 
   /**
    * The set of all attributes that are produced by this node.
+   * 该节点产生的属性
    */
   def producedAttributes: AttributeSet = AttributeSet.empty
 
   /**
    * All Attributes that appear in expressions from this operator.  Note that this set does not
    * include attributes that are implicitly referenced by being passed through to the output tuple.
+   * 表示节点表达式中所涉及的所有属性集合
    */
   @transient
   lazy val references: AttributeSet = {
@@ -63,6 +70,7 @@ abstract class QueryPlan[PlanType <: QueryPlan[PlanType]] extends TreeNode[PlanT
 
   /**
    * Attributes that are referenced by expressions but not provided by this node's children.
+   * 该节点表达式中涉及的但是其子节点输出中并不包含的属性
    */
   final def missingInput: AttributeSet = references -- inputSet
 
@@ -159,6 +167,9 @@ abstract class QueryPlan[PlanType <: QueryPlan[PlanType]] extends TreeNode[PlanT
     }.toSeq
   }
 
+  /**
+   * 对应output输出属性的schema信息
+   */
   lazy val schema: StructType = StructType.fromAttributes(output)
 
   /** Returns the output schema in the tree format. */
@@ -196,6 +207,7 @@ abstract class QueryPlan[PlanType <: QueryPlan[PlanType]] extends TreeNode[PlanT
 
   /**
    * All the subqueries of current plan.
+   *
    */
   def subqueries: Seq[PlanType] = {
     expressions.flatMap(_.collect {
@@ -299,6 +311,7 @@ abstract class QueryPlan[PlanType <: QueryPlan[PlanType]] extends TreeNode[PlanT
 
   /**
    * All the attributes that are used for this plan.
+   * 记录节点涉及的所有属性列表
    */
   lazy val allAttributes: AttributeSeq = children.flatMap(_.output)
 }

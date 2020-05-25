@@ -64,6 +64,8 @@ import org.apache.spark.util.Utils;
  * Unlike {@link org.apache.spark.util.collection.ExternalSorter}, this sorter does not merge its
  * spill files. Instead, this merging is performed in {@link UnsafeShuffleWriter}, which uses a
  * specialized merge procedure that avoids extra serialization/deserialization.
+ *
+ * 用于将map任务输出到Tungsten中。其并没有实现数据持久化功能，持久化有UnsafeShuffleWriter来实现
  */
 final class ShuffleExternalSorter extends MemoryConsumer {
 
@@ -72,7 +74,14 @@ final class ShuffleExternalSorter extends MemoryConsumer {
   @VisibleForTesting
   static final int DISK_WRITE_BUFFER_SIZE = 1024 * 1024;
 
+  /**
+   * 分区数量
+   */
   private final int numPartitions;
+
+  /**
+   *
+   */
   private final TaskMemoryManager taskMemoryManager;
   private final BlockManager blockManager;
   private final TaskContext taskContext;
@@ -80,13 +89,20 @@ final class ShuffleExternalSorter extends MemoryConsumer {
 
   /**
    * Force this sorter to spill when there are this many elements in memory.
+   * 溢出数量阈值
    */
   private final int numElementsForSpillThreshold;
 
-  /** The buffer size to use when writing spills using DiskBlockObjectWriter */
+  /**
+   * The buffer size to use when writing spills using DiskBlockObjectWriter
+   * 创建DiskBlockObjectWriter缓冲区
+   * */
   private final int fileBufferSizeBytes;
 
-  /** The buffer size to use when writing the sorted records to an on-disk file */
+  /**
+   * The buffer size to use when writing the sorted records to an on-disk file
+   *
+   * */
   private final int diskWriteBufferSize;
 
   /**
@@ -94,17 +110,36 @@ final class ShuffleExternalSorter extends MemoryConsumer {
    * spilling, although in principle we could recycle these pages across spills (on the other hand,
    * this might not be necessary if we maintained a pool of re-usable pages in the TaskMemoryManager
    * itself).
+   *
+   * 已经分配的Page列表
    */
   private final LinkedList<MemoryBlock> allocatedPages = new LinkedList<>();
 
+  /**
+   * 溢出文件的元数据
+   */
   private final LinkedList<SpillInfo> spills = new LinkedList<>();
 
-  /** Peak memory used by this sorter so far, in bytes. **/
+  /**
+   * Peak memory used by this sorter so far, in bytes.
+   * 使用内存峰值
+   * */
   private long peakMemoryUsedBytes;
 
   // These variables are reset after spilling:
+  /**
+   * 用于在内存中对插入数据进行排序
+   */
   @Nullable private ShuffleInMemorySorter inMemSorter;
+
+  /**
+   * 当前Page
+   */
   @Nullable private MemoryBlock currentPage = null;
+
+  /**
+   * Page的光标，实际为写入Tungsten的地址
+   */
   private long pageCursor = -1;
 
   ShuffleExternalSorter(
@@ -273,7 +308,10 @@ final class ShuffleExternalSorter extends MemoryConsumer {
       spills.size(),
       spills.size() > 1 ? " times" : " time");
 
+    //将内存中数据排序后输出到磁盘
     writeSortedFile(false);
+
+
     final long spillSize = freeMemory();
     inMemSorter.reset();
     // Reset the in-memory sorter's pointer array only after freeing up the memory pages holding the
@@ -390,6 +428,7 @@ final class ShuffleExternalSorter extends MemoryConsumer {
 
   /**
    * Write a record to the shuffle sorter.
+   * 对map任务输出在内存排序聚合的入口
    */
   public void insertRecord(Object recordBase, long recordOffset, int length, int partitionId)
     throws IOException {
@@ -399,22 +438,40 @@ final class ShuffleExternalSorter extends MemoryConsumer {
     if (inMemSorter.numRecords() >= numElementsForSpillThreshold) {
       logger.info("Spilling data because number of spilledRecords crossed the threshold " +
         numElementsForSpillThreshold);
+
+      //溢出到磁盘
       spill();
     }
 
+    //检查是否有足够空间将额外的记录插入到排序指针数组中
+    //如果要额外的空间，则增加容量
     growPointerArrayIfNecessary();
+
     final int uaoSize = UnsafeAlignedOffset.getUaoSize();
+
     // Need 4 or 8 bytes to store the record length.
     final int required = length + uaoSize;
+
+    //检查是否有额外空间，如果需要额外空间，则申请分配新的Page
     acquireNewPageIfNecessary(required);
 
     assert(currentPage != null);
+
     final Object base = currentPage.getBaseObject();
     final long recordAddress = taskMemoryManager.encodePageNumberAndOffset(currentPage, pageCursor);
+
+    //写入长度
     UnsafeAlignedOffset.putSize(base, pageCursor, length);
+
+
     pageCursor += uaoSize;
+
+    //将数据拷贝到Page中
     Platform.copyMemory(recordBase, recordOffset, base, pageCursor, length);
+
     pageCursor += length;
+
+    //将元数据保存到内部存储的数组中
     inMemSorter.insertRecord(recordAddress, partitionId);
   }
 

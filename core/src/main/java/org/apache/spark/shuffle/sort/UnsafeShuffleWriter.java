@@ -81,12 +81,26 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   private final long mapId;
   private final TaskContext taskContext;
   private final SparkConf sparkConf;
+
+  /**
+   * 是否采用nio的从文件流到文件流的方式复制
+   */
   private final boolean transferToEnabled;
+
+  /**
+   * 初始化排序缓冲大小
+   */
   private final int initialSortBufferSize;
+
+
   private final int inputBufferSizeInBytes;
 
   @Nullable private MapStatus mapStatus;
   @Nullable private ShuffleExternalSorter sorter;
+
+  /**
+   * 峰值
+   */
   private long peakMemoryUsedBytes = 0;
 
   /** Subclass of ByteArrayOutputStream that exposes `buf` directly. */
@@ -95,7 +109,14 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     public byte[] getBuf() { return buf; }
   }
 
+  /**
+   *
+   */
   private MyByteArrayOutputStream serBuffer;
+
+  /**
+   *
+   */
   private SerializationStream serOutputStream;
 
   /**
@@ -174,9 +195,14 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     boolean success = false;
     try {
       while (records.hasNext()) {
+
+        //将记录插入排序器
         insertRecordIntoSorter(records.next());
       }
+
+      //将map任务输出到磁盘
       closeAndWriteOutput();
+
       success = true;
     } finally {
       if (sorter != null) {
@@ -213,13 +239,20 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   @VisibleForTesting
   void closeAndWriteOutput() throws IOException {
     assert(sorter != null);
+
+    //更新峰值
     updatePeakMemoryUsed();
     serBuffer = null;
     serOutputStream = null;
+
+    //获得溢出文件信息数组
     final SpillInfo[] spills = sorter.closeAndGetSpills();
     sorter = null;
+
     final long[] partitionLengths;
     try {
+
+      //合并所有溢出文件到正式输出文件
       partitionLengths = mergeSpills(spills);
     } finally {
       for (SpillInfo spill : spills) {
@@ -245,6 +278,7 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     final int serializedRecordSize = serBuffer.size();
     assert (serializedRecordSize > 0);
 
+    //将serBuffer的数组写到Tungsten内存中
     sorter.insertRecord(
       serBuffer.getBuf(), Platform.BYTE_ARRAY_OFFSET, serializedRecordSize, partitionId);
   }

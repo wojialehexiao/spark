@@ -39,32 +39,54 @@ abstract class PersistenceEngine {
   /**
    * Defines how the object is serialized and persisted. Implementation will
    * depend on the store used.
+   *
+   * 对对象进行序列化和持久化
    */
   def persist(name: String, obj: Object): Unit
 
   /**
    * Defines how the object referred by its name is removed from the store.
+   *
+   * 移除持久化
    */
   def unpersist(name: String): Unit
 
   /**
    * Gives all objects, matching a prefix. This defines how objects are
    * read/deserialized back.
+   *
+   * 读取指定前缀的对象
    */
   def read[T: ClassTag](prefix: String): Seq[T]
 
+  /**
+   * 对应用程序信息进行持久化
+   * @param app
+   */
   final def addApplication(app: ApplicationInfo): Unit = {
     persist("app_" + app.id, app)
   }
 
+  /**
+   * 对应用程序信息删除
+   * @param app
+   */
   final def removeApplication(app: ApplicationInfo): Unit = {
     unpersist("app_" + app.id)
   }
 
+  /**
+   * 对worker信息进行序列化保存
+   * @param worker
+   */
   final def addWorker(worker: WorkerInfo): Unit = {
     persist("worker_" + worker.id, worker)
   }
 
+  /**
+   *
+   * @param worker
+   */
   final def removeWorker(worker: WorkerInfo): Unit = {
     unpersist("worker_" + worker.id)
   }
@@ -80,6 +102,7 @@ abstract class PersistenceEngine {
   /**
    * Returns the persisted data sorted by their respective ids (which implies that they're
    * sorted by time of creation).
+   * 读取所有持久化数据
    */
   final def readPersistedData(
       rpcEnv: RpcEnv): (Seq[ApplicationInfo], Seq[DriverInfo], Seq[WorkerInfo]) = {

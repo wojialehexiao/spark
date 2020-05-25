@@ -32,7 +32,15 @@ trait LeaderElectionAgent {
 
 @DeveloperApi
 trait LeaderElectable {
+
+  /**
+   * 被选举为领导
+   */
   def electedLeader(): Unit
+
+  /**
+   * 撤销领导关系
+   */
   def revokedLeadership(): Unit
 }
 

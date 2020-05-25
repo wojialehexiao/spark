@@ -70,17 +70,31 @@ private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
 
   sc.listenerBus.addToManagementQueue(this)
 
+
   override val rpcEnv: RpcEnv = sc.env.rpcEnv
+
 
   private[spark] var scheduler: TaskScheduler = null
 
   // executor ID -> timestamp of when the last heartbeat from this executor was received
+  /**
+   * 用于维护Executor的身份标识与最后一次收到心跳的时间戳
+   */
   private val executorLastSeen = new HashMap[String, Long]
 
+  /**
+   * Executor的超时时间。 默认120s
+   */
   private val executorTimeoutMs = sc.conf.get(config.STORAGE_BLOCKMANAGER_SLAVE_TIMEOUT)
 
+  /**
+   * 检查超时时间的间隔。 默认60s
+   */
   private val checkTimeoutIntervalMs = sc.conf.get(Network.NETWORK_TIMEOUT_INTERVAL)
 
+  /**
+   * Executor 心跳间隔
+   */
   private val executorHeartbeatIntervalMs = sc.conf.get(config.EXECUTOR_HEARTBEAT_INTERVAL)
 
   require(checkTimeoutIntervalMs <= executorTimeoutMs,
@@ -90,12 +104,14 @@ private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
     s"${config.EXECUTOR_HEARTBEAT_INTERVAL.key} should be less than or " +
       s"equal to ${config.STORAGE_BLOCKMANAGER_SLAVE_TIMEOUT.key}")
 
+
   private var timeoutCheckingTask: ScheduledFuture[_] = null
 
   // "eventLoopThread" is used to run some pretty fast actions. The actions running in it should not
   // block the thread for a long time.
   private val eventLoopThread =
     ThreadUtils.newDaemonSingleThreadScheduledExecutor("heartbeat-receiver-event-loop-thread")
+
 
   private val killExecutorThread = ThreadUtils.newDaemonSingleThreadExecutor("kill-executor-thread")
 
@@ -108,15 +124,23 @@ private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
   override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
 
     // Messages sent and received locally
+    // Messages sent and received locally
+    // 接收到自己发的消息
     case ExecutorRegistered(executorId) =>
       executorLastSeen(executorId) = clock.getTimeMillis()
       context.reply(true)
+
+
     case ExecutorRemoved(executorId) =>
       executorLastSeen.remove(executorId)
       context.reply(true)
+
+    //表示SparkContext的 _taskScheduler已经持有了TaskScheduler的引用
     case TaskSchedulerIsSet =>
       scheduler = sc.taskScheduler
       context.reply(true)
+
+
     case ExpireDeadHosts =>
       expireDeadHosts()
       context.reply(true)
@@ -154,6 +178,9 @@ private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
   /**
    * Send ExecutorRegistered to the event loop to add a new executor. Only for test.
    *
+   * 向自己发送ExecutorRegistered消息。
+   * 在receiveAndReply
+   *
    * @return if HeartbeatReceiver is stopped, return None. Otherwise, return a Some(Future) that
    *         indicate if this operation is successful.
    */
@@ -163,6 +190,9 @@ private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
 
   /**
    * If the heartbeat receiver is not stopped, notify it of executor registrations.
+   *
+   * 注册Executor， 事件总线在接收到SparkListenerExecutorAdded消息之后
+   * 将调用HeartBeatReceiver的onExecutorAdded， 将监听到Executor的添加
    */
   override def onExecutorAdded(executorAdded: SparkListenerExecutorAdded): Unit = {
     addExecutor(executorAdded.executorId)
@@ -199,6 +229,8 @@ private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
       if (now - lastSeenMs > executorTimeoutMs) {
         logWarning(s"Removing executor $executorId with no recent heartbeats: " +
           s"${now - lastSeenMs} ms exceeds timeout $executorTimeoutMs ms")
+
+         //移除丢失的Executor
         scheduler.executorLost(executorId, SlaveLost("Executor heartbeat " +
           s"timed out after ${now - lastSeenMs} ms"))
           // Asynchronously kill the executor to avoid blocking the current thread
@@ -206,6 +238,7 @@ private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
           override def run(): Unit = Utils.tryLogNonFatalError {
             // Note: we want to get an executor back after expiring this one,
             // so do not simply call `sc.killExecutor` here (SPARK-8119)
+            // 杀死Executor
             sc.killAndReplaceExecutor(executorId)
           }
         })

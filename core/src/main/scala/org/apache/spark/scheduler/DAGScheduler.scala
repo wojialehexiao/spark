@@ -1514,8 +1514,11 @@ private[spark] class DAGScheduler(
     if (tasks.nonEmpty) {
       logInfo(s"Submitting ${tasks.size} missing tasks from $stage (${stage.rdd}) (first 15 " +
         s"tasks are for partitions ${tasks.take(15).map(_.partitionId)})")
-      taskScheduler.submitTasks(new TaskSet(
-        tasks.toArray, stage.id, stage.latestInfo.attemptNumber, jobId, properties))
+
+
+      taskScheduler.submitTasks(
+        new TaskSet(tasks.toArray, stage.id, stage.latestInfo.attemptNumber, jobId, properties)
+      )
     } else {
 
       //没有创建任何Task， 将当前Stage标记为完成

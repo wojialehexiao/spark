@@ -17,20 +17,20 @@
 
 package org.apache.spark.rpc.netty
 
-import java.util.concurrent.{ConcurrentHashMap, ConcurrentMap, LinkedBlockingQueue, ThreadPoolExecutor, TimeUnit}
+import java.util.concurrent._
+
 import javax.annotation.concurrent.GuardedBy
-
-import scala.collection.JavaConverters._
-import scala.concurrent.Promise
-import scala.util.control.NonFatal
-
-import org.apache.spark.{SparkConf, SparkContext, SparkException}
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config.EXECUTOR_ID
 import org.apache.spark.internal.config.Network.RPC_NETTY_DISPATCHER_NUM_THREADS
 import org.apache.spark.network.client.RpcResponseCallback
 import org.apache.spark.rpc._
 import org.apache.spark.util.ThreadUtils
+import org.apache.spark.{SparkConf, SparkContext, SparkException}
+
+import scala.collection.JavaConverters._
+import scala.concurrent.Promise
+import scala.util.control.NonFatal
 
 /**
  * A message dispatcher, responsible for routing RPC messages to the appropriate endpoint(s).
@@ -55,7 +55,8 @@ private[netty] class Dispatcher(nettyEnv: NettyRpcEnv, numUsableCores: Int) exte
   }
 
   /**
-    * 端点实例名称与端点数据EndPointData直接的映射关系缓存。有了这个缓存，就可以使用端点名称从中快速获取或删除EndpointData了
+    * 端点实例名称与端点数据EndPointData直接的映射关系缓存。
+   * 有了这个缓存，就可以使用端点名称从中快速获取或删除EndpointData了
     */
   private val endpoints: ConcurrentMap[String, EndpointData] =
     new ConcurrentHashMap[String, EndpointData]
@@ -99,6 +100,8 @@ private[netty] class Dispatcher(nettyEnv: NettyRpcEnv, numUsableCores: Int) exte
       }
       val data = endpoints.get(name)
       endpointRefs.put(data.endpoint, data.ref)
+
+
       receivers.offer(data)  // for the OnStart message
     }
     endpointRef

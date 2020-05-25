@@ -19,31 +19,35 @@ package org.apache.spark.sql.catalyst.trees
 
 import java.util.UUID
 
-import scala.collection.{mutable, Map}
-import scala.reflect.ClassTag
-
 import org.apache.commons.lang3.ClassUtils
-import org.json4s.JsonAST._
-import org.json4s.JsonDSL._
-import org.json4s.jackson.JsonMethods._
-
 import org.apache.spark.sql.catalyst.IdentifierWithDatabase
 import org.apache.spark.sql.catalyst.ScalaReflection._
-import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogStorageFormat, CatalogTable, CatalogTableType, FunctionResource}
+import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.errors._
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.JoinType
-import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.physical.{BroadcastMode, Partitioning}
 import org.apache.spark.sql.catalyst.util.StringUtils.PlanStringConcat
 import org.apache.spark.sql.catalyst.util.truncatedString
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.storage.StorageLevel
+import org.json4s.JsonAST._
+import org.json4s.JsonDSL._
+import org.json4s.jackson.JsonMethods._
+
+import scala.collection.{Map, mutable}
+import scala.reflect.ClassTag
 
 /** Used by [[TreeNode.getNodeNumbered]] when traversing the tree for a given number */
 private class MutableInt(var i: Int)
 
+
+/**
+ * 提供行号和偏移量
+ * @param line
+ * @param startPosition
+ */
 case class Origin(
   line: Option[Int] = None,
   startPosition: Option[Int] = None)
@@ -67,6 +71,13 @@ object CurrentOrigin {
       value.get.copy(line = Some(line), startPosition = Some(start)))
   }
 
+  /**
+   * 支持在TreeNode上执行操作的同时修改当前origin信息
+   * @param o
+   * @param f
+   * @tparam A
+   * @return
+   */
   def withOrigin[A](o: Origin)(f: => A): A = {
     set(o)
     val ret = try f finally { reset() }
@@ -188,6 +199,7 @@ abstract class TreeNode[BaseType <: TreeNode[BaseType]] extends Product {
 
   /**
    * Returns a Seq containing the leaves in this tree.
+   * 获取当前TreeNode所有叶子节点
    */
   def collectLeaves(): Seq[BaseType] = {
     this.collect { case p if p.children.isEmpty => p }
@@ -196,6 +208,8 @@ abstract class TreeNode[BaseType <: TreeNode[BaseType]] extends Product {
   /**
    * Finds and returns the first [[TreeNode]] of the tree for which the given partial function
    * is defined (pre-order), and applies the partial function to it.
+   *
+   * 先序遍历所有节点并返回第一个满足条件的节点
    */
   def collectFirst[B](pf: PartialFunction[BaseType, B]): Option[B] = {
     val lifted = pf.lift
@@ -219,6 +233,7 @@ abstract class TreeNode[BaseType <: TreeNode[BaseType]] extends Product {
 
   /**
    * Returns a copy of this node with the children replaced.
+   * 将当前节点的子节点替换为新的子节点
    * TODO: Validate somewhere (in debug mode?) that children are ordered correctly.
    */
   def withNewChildren(newChildren: Seq[BaseType]): BaseType = {
@@ -278,6 +293,7 @@ abstract class TreeNode[BaseType <: TreeNode[BaseType]] extends Product {
   /**
    * Returns a copy of this node where `rule` has been recursively applied to it and all of its
    * children (pre-order). When `rule` does not apply to a given node it is left unchanged.
+   * 使用先序遍历方式将规则作用于所有节点
    *
    * @param rule the function used to transform this nodes children
    */
@@ -300,6 +316,8 @@ abstract class TreeNode[BaseType <: TreeNode[BaseType]] extends Product {
    * Returns a copy of this node where `rule` has been recursively applied first to all of its
    * children and then itself (post-order). When `rule` does not apply to a given node, it is left
    * unchanged.
+   *
+   * 使用后序遍历方式将规则作用于所有节点
    *
    * @param rule the function use to transform this nodes children
    */

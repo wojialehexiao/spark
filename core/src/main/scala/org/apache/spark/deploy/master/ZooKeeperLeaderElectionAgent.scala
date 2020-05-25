@@ -31,7 +31,15 @@ private[master] class ZooKeeperLeaderElectionAgent(val masterInstance: LeaderEle
   val workingDir = conf.get(ZOOKEEPER_DIRECTORY).getOrElse("/spark") + "/leader_election"
 
   private var zk: CuratorFramework = _
+
+  /**
+   * 使用zookeeper进行领导选举的客户端
+   */
   private var leaderLatch: LeaderLatch = _
+
+  /**
+   * 领导选举的状态， 包含有领导和无领导
+   */
   private var status = LeadershipStatus.NOT_LEADER
 
   start()
@@ -40,6 +48,8 @@ private[master] class ZooKeeperLeaderElectionAgent(val masterInstance: LeaderEle
     logInfo("Starting ZooKeeper LeaderElection agent")
     zk = SparkCuratorUtil.newClient(conf)
     leaderLatch = new LeaderLatch(zk, workingDir)
+
+    //添加Listener， 在客户端失去或获得管理权时进行回调处理
     leaderLatch.addListener(this)
     leaderLatch.start()
   }
@@ -74,10 +84,14 @@ private[master] class ZooKeeperLeaderElectionAgent(val masterInstance: LeaderEle
   }
 
   private def updateLeadershipStatus(isLeader: Boolean): Unit = {
+
+    //选举为领导
     if (isLeader && status == LeadershipStatus.NOT_LEADER) {
       status = LeadershipStatus.LEADER
       masterInstance.electedLeader()
     } else if (!isLeader && status == LeadershipStatus.LEADER) {
+
+      //撤销领导职务
       status = LeadershipStatus.NOT_LEADER
       masterInstance.revokedLeadership()
     }

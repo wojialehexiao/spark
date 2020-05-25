@@ -57,6 +57,8 @@ private[spark] class YarnRMClient extends Logging {
       sparkConf: SparkConf,
       uiAddress: Option[String],
       uiHistoryAddress: String): Unit = {
+
+
     amClient = AMRMClient.createAMRMClient()
     amClient.init(conf)
     amClient.start()
@@ -71,6 +73,8 @@ private[spark] class YarnRMClient extends Logging {
       amClient.registerApplicationMaster(driverHost, driverPort, trackingUrl)
       registered = true
     }
+
+
   }
 
   def createAllocator(

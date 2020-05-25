@@ -241,6 +241,7 @@ private[spark] object CoarseGrainedExecutorBackend extends Logging {
         arguments.hostname, arguments.cores, arguments.userClassPath, env,
         arguments.resourcesFileOpt)
     }
+
     run(parseArguments(args, this.getClass.getCanonicalName.stripSuffix("$")), createFn)
     System.exit(0)
   }
@@ -252,11 +253,16 @@ private[spark] object CoarseGrainedExecutorBackend extends Logging {
     Utils.initDaemon(log)
 
     SparkHadoopUtil.get.runAsSparkUser { () =>
+
       // Debug code
       Utils.checkHost(arguments.hostname)
 
       // Bootstrap to fetch the driver's Spark properties.
       val executorConf = new SparkConf
+
+
+      //创建名为driverPropsFetcher的RpcEnv。此RpcEnv主要用于从Driver拉取属性信息，
+      //并非Executor的SparkEnv中的
       val fetcher = RpcEnv.create(
         "driverPropsFetcher",
         arguments.hostname,
@@ -264,6 +270,7 @@ private[spark] object CoarseGrainedExecutorBackend extends Logging {
         executorConf,
         new SecurityManager(executorConf),
         clientMode = true)
+
 
       var driver: RpcEndpointRef = null
       val nTries = 3
@@ -277,11 +284,14 @@ private[spark] object CoarseGrainedExecutorBackend extends Logging {
         }
       }
 
+
       val cfg = driver.askSync[SparkAppConfig](RetrieveSparkAppConfig)
       val props = cfg.sparkProperties ++ Seq[(String, String)](("spark.app.id", arguments.appId))
       fetcher.shutdown()
 
+
       // Create SparkEnv using properties we fetched from the driver.
+      // 创建自己的SparkConf
       val driverConf = new SparkConf()
       for ((key, value) <- props) {
         // this is required for SSL in standalone mode
@@ -292,18 +302,27 @@ private[spark] object CoarseGrainedExecutorBackend extends Logging {
         }
       }
 
+
       cfg.hadoopDelegationCreds.foreach { tokens =>
         SparkHadoopUtil.get.addDelegationTokens(tokens, driverConf)
       }
 
       driverConf.set(EXECUTOR_ID, arguments.executorId)
+
+      //创建Executor自身的SparkEnv
       val env = SparkEnv.createExecutorEnv(driverConf, arguments.executorId, arguments.hostname,
         arguments.cores, cfg.ioEncryptionKey, isLocal = false)
 
+      // 创建并注册CoarseGrainedExecutorBackend实例
       env.rpcEnv.setupEndpoint("Executor", backendCreateFn(env.rpcEnv, arguments, env))
+
+
+      // 创建并注册WorkerWather实例
       arguments.workerUrl.foreach { url =>
         env.rpcEnv.setupEndpoint("WorkerWatcher", new WorkerWatcher(env.rpcEnv, url))
       }
+
+
       env.rpcEnv.awaitTermination()
     }
   }

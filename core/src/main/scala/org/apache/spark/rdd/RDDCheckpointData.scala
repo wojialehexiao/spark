@@ -43,9 +43,15 @@ private[spark] abstract class RDDCheckpointData[T: ClassTag](@transient private 
   import CheckpointState._
 
   // The checkpoint state of the associated RDD.
+  /**
+   * 检查点的状态
+   */
   protected var cpState = Initialized
 
   // The RDD that contains our checkpointed data
+  /**
+   * 保存检查点的RDD
+   */
   private var cpRDD: Option[CheckpointRDD[T]] = None
 
   // TODO: are we sure we need to use a global lock in the following methods?
@@ -60,6 +66,7 @@ private[spark] abstract class RDDCheckpointData[T: ClassTag](@transient private 
   /**
    * Materialize this RDD and persist its content.
    * This is called immediately after the first action invoked on this RDD has completed.
+   * 将Checpoint数据保存到检查点的模板方法
    */
   final def checkpoint(): Unit = {
     // Guard against multiple threads checkpointing the same RDD by

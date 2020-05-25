@@ -18,20 +18,38 @@
 package org.apache.spark.shuffle.sort
 
 import org.apache.spark._
-import org.apache.spark.internal.{config, Logging}
+import org.apache.spark.internal.{Logging, config}
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.shuffle.{BaseShuffleHandle, IndexShuffleBlockResolver, ShuffleWriter}
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents
+import org.apache.spark.shuffle.{BaseShuffleHandle, IndexShuffleBlockResolver, ShuffleWriter}
 import org.apache.spark.util.collection.ExternalSorter
 
+/**
+ * 提供对Shuffle的排序功能
+ * 其使用ExternalSorter， 还支持对Shuffle的聚合
+ *
+ * @param shuffleBlockResolver
+ * @param handle
+ * @param mapId
+ * @param context
+ * @param shuffleExecutorComponents
+ * @tparam K
+ * @tparam V
+ * @tparam C
+ */
 private[spark] class SortShuffleWriter[K, V, C](
-    shuffleBlockResolver: IndexShuffleBlockResolver,
-    handle: BaseShuffleHandle[K, V, C],
-    mapId: Long,
-    context: TaskContext,
-    shuffleExecutorComponents: ShuffleExecutorComponents)
+                                                 shuffleBlockResolver: IndexShuffleBlockResolver,
+                                                 handle: BaseShuffleHandle[K, V, C],
+
+                                               //
+                                                 mapId: Long,
+                                                 context: TaskContext,
+                                                 shuffleExecutorComponents: ShuffleExecutorComponents)
   extends ShuffleWriter[K, V] with Logging {
 
+  /**
+   * ShuffleDependency
+   */
   private val dep = handle.dependency
 
   private val blockManager = SparkEnv.get.blockManager
@@ -41,14 +59,30 @@ private[spark] class SortShuffleWriter[K, V, C](
   // Are we in the process of stopping? Because map tasks can call stop() with success = true
   // and then call stop() with success = false if they get an exception, we want to make sure
   // we don't try deleting files, etc twice.
+  /**
+   * 是否正在停止
+   */
   private var stopping = false
 
+  /**
+   * map任务状态
+   */
   private var mapStatus: MapStatus = null
 
+  /**
+   * shuffle写入的度量
+   */
   private val writeMetrics = context.taskMetrics().shuffleWriteMetrics
 
-  /** Write a bunch of records to this task's output */
+
+  /**
+   * Write a bunch of records to this task's output
+   * 将map任务输出到磁盘
+   * */
   override def write(records: Iterator[Product2[K, V]]): Unit = {
+
+
+    // 根据是否允许map端合并决定是否将aggregator和keyOrdering传给ExternalSorter
     sorter = if (dep.mapSideCombine) {
       new ExternalSorter[K, V, C](
         context, dep.aggregator, Some(dep.partitioner), dep.keyOrdering, dep.serializer)
@@ -59,6 +93,8 @@ private[spark] class SortShuffleWriter[K, V, C](
       new ExternalSorter[K, V, V](
         context, aggregator = None, Some(dep.partitioner), ordering = None, dep.serializer)
     }
+
+    //将map任务输出到缓存
     sorter.insertAll(records)
 
     // Don't bother including the time to open the merged output file in the shuffle write time,
@@ -66,8 +102,11 @@ private[spark] class SortShuffleWriter[K, V, C](
     // (see SPARK-3570).
     val mapOutputWriter = shuffleExecutorComponents.createMapOutputWriter(
       dep.shuffleId, mapId, dep.partitioner.numPartitions)
+
     sorter.writePartitionedMapOutput(dep.shuffleId, mapId, mapOutputWriter)
+
     val partitionLengths = mapOutputWriter.commitAllPartitions()
+
     mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths, mapId)
   }
 
@@ -96,6 +135,13 @@ private[spark] class SortShuffleWriter[K, V, C](
 }
 
 private[spark] object SortShuffleWriter {
+
+  /**
+   * 是否绕开合并和排序
+   * @param conf
+   * @param dep
+   * @return
+   */
   def shouldBypassMergeSort(conf: SparkConf, dep: ShuffleDependency[_, _, _]): Boolean = {
     // We cannot bypass sorting if we need to do map-side aggregation.
     if (dep.mapSideCombine) {

@@ -30,6 +30,11 @@ import org.apache.spark.unsafe.Platform;
  */
 public class HeapMemoryAllocator implements MemoryAllocator {
 
+  /**
+   * 关于MemoryBlock的弱引用的缓冲池，用于Page页的分配
+   * 通过WeakReference来引用MemoryBlock， 当MemoryBlock不在被引用时，主动调用System.gc()
+   * 可以保证被回收，以便加快内存回收和分配效率
+   */
   @GuardedBy("this")
   private final Map<Long, LinkedList<WeakReference<long[]>>> bufferPoolsBySize = new HashMap<>();
 
@@ -38,12 +43,22 @@ public class HeapMemoryAllocator implements MemoryAllocator {
   /**
    * Returns true if allocations of the given size should go through the pooling mechanism and
    * false otherwise.
+   * 对于指定大小的MemoryBlock，是否使用池化机制。
+   * 从bufferPoolsBySize获取MemoryBlock
+   * 或将MemoryBlock放到bufferPoolsBySize
    */
   private boolean shouldPool(long size) {
     // Very small allocations are less likely to benefit from pooling.
     return size >= POOLING_THRESHOLD_BYTES;
   }
 
+
+  /**
+   * 获取指定大小的 MemoryBlock
+   * @param size
+   * @return
+   * @throws OutOfMemoryError
+   */
   @Override
   public MemoryBlock allocate(long size) throws OutOfMemoryError {
     int numWords = (int) ((size + 7) / 8);
@@ -55,20 +70,27 @@ public class HeapMemoryAllocator implements MemoryAllocator {
         if (pool != null) {
           while (!pool.isEmpty()) {
             final WeakReference<long[]> arrayReference = pool.pop();
+
             final long[] array = arrayReference.get();
+
             if (array != null) {
               assert (array.length * 8L >= size);
               MemoryBlock memory = new MemoryBlock(array, Platform.LONG_ARRAY_OFFSET, size);
               if (MemoryAllocator.MEMORY_DEBUG_FILL_ENABLED) {
                 memory.fill(MemoryAllocator.MEMORY_DEBUG_FILL_CLEAN_VALUE);
               }
+              //从MemoryBlock缓存获取的指定大小的MemoryBlock
               return memory;
             }
           }
+
+          //移除指定大小的MemoryBlock缓存
           bufferPoolsBySize.remove(alignedSize);
         }
       }
     }
+
+
     long[] array = new long[numWords];
     MemoryBlock memory = new MemoryBlock(array, Platform.LONG_ARRAY_OFFSET, size);
     if (MemoryAllocator.MEMORY_DEBUG_FILL_ENABLED) {
@@ -77,6 +99,11 @@ public class HeapMemoryAllocator implements MemoryAllocator {
     return memory;
   }
 
+
+  /**
+   * 释放内存
+   * @param memory
+   */
   @Override
   public void free(MemoryBlock memory) {
     assert (memory.obj != null) :
@@ -109,6 +136,8 @@ public class HeapMemoryAllocator implements MemoryAllocator {
           pool = new LinkedList<>();
           bufferPoolsBySize.put(alignedSize, pool);
         }
+
+        //将MemoryBlock放入弱引用Buffer
         pool.add(new WeakReference<>(array));
       }
     } else {

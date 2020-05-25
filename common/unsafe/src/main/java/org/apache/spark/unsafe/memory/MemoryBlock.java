@@ -26,7 +26,9 @@ import org.apache.spark.unsafe.Platform;
  */
 public class MemoryBlock extends MemoryLocation {
 
-  /** Special `pageNumber` value for pages which were not allocated by TaskMemoryManagers */
+  /**
+   * Special `pageNumber` value for pages which were not allocated by TaskMemoryManagers
+   * */
   public static final int NO_PAGE_NUMBER = -1;
 
   /**
@@ -45,12 +47,17 @@ public class MemoryBlock extends MemoryLocation {
    */
   public static final int FREED_IN_ALLOCATOR_PAGE_NUMBER = -3;
 
+  /**
+   * 数据长度，定位数据由offset做为其实偏移量，length为长度从内存读取
+   */
   private final long length;
 
   /**
    * Optional page number; used when this MemoryBlock represents a page allocated by a
    * TaskMemoryManager. This field is public so that it can be modified by the TaskMemoryManager,
    * which lives in a different package.
+   *
+   * 页号 TaskMemoryManager分配由MemoryBlock表示的Page时用到该属性
    */
   public int pageNumber = NO_PAGE_NUMBER;
 
@@ -68,6 +75,7 @@ public class MemoryBlock extends MemoryLocation {
 
   /**
    * Creates a memory block pointing to the memory used by the long array.
+   * 创建一个指向长数组使用的内存的MemoryBlock。
    */
   public static MemoryBlock fromLongArray(final long[] array) {
     return new MemoryBlock(array, Platform.LONG_ARRAY_OFFSET, array.length * 8L);
@@ -75,6 +83,8 @@ public class MemoryBlock extends MemoryLocation {
 
   /**
    * Fills the memory block with the specified byte value.
+   * 以指定字节填充整个MemoryBlock，将obj对象从offset开始，长度为length的堆内存
+   * 替换为指定字节的值。
    */
   public void fill(byte value) {
     Platform.setMemory(obj, offset, length, value);

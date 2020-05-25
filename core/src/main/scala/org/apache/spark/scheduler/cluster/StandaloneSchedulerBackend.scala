@@ -35,6 +35,7 @@ import org.apache.spark.util.Utils
 
 /**
  * A [[SchedulerBackend]] implementation for Spark's standalone cluster manager.
+ * SchedulerBackend存在的最大价值是代理TaskSchedulerImpl， 将集群分配给Application的资源进一步分配给Task。
  */
 private[spark] class StandaloneSchedulerBackend(
     scheduler: TaskSchedulerImpl,
@@ -46,6 +47,10 @@ private[spark] class StandaloneSchedulerBackend(
 
   private var client: StandaloneAppClient = null
   private val stopping = new AtomicBoolean(false)
+
+  /**
+   *
+   */
   private val launcherBackend = new LauncherBackend() {
     override protected def conf: SparkConf = sc.conf
     override protected def onStopRequest(): Unit = stop(SparkAppHandle.State.KILLED)
@@ -54,9 +59,20 @@ private[spark] class StandaloneSchedulerBackend(
   @volatile var shutdownCallback: StandaloneSchedulerBackend => Unit = _
   @volatile private var appId: String = _
 
+  /**
+   * 使用java的信号量实现栅栏，用于等待Application向Master注册完成后，
+   * 将当前Application状态告知LauncherServer
+   */
   private val registrationBarrier = new Semaphore(0)
 
+  /**
+   * Application可以申请的最大内核数
+   */
   private val maxCores = conf.get(config.CORES_MAX)
+
+  /**
+   * Application期望获得的最大内核数
+   */
   private val totalExpectedCores = maxCores.getOrElse(0)
 
   override def start(): Unit = {
@@ -118,7 +134,9 @@ private[spark] class StandaloneSchedulerBackend(
     val appDesc = ApplicationDescription(sc.appName, maxCores, sc.executorMemory, command,
       webUrl, sc.eventLogDir, sc.eventLogCodec, coresPerExecutor, initialExecutorLimit,
       resourceReqsPerExecutor = executorResourceReqs)
+
     client = new StandaloneAppClient(sc.env.rpcEnv, masters, appDesc, this, conf)
+
     client.start()
     launcherBackend.setState(SparkAppHandle.State.SUBMITTED)
     waitForRegistration()
@@ -132,7 +150,11 @@ private[spark] class StandaloneSchedulerBackend(
   override def connected(appId: String): Unit = {
     logInfo("Connected to Spark cluster with app ID " + appId)
     this.appId = appId
+
+    //是否信号量
     notifyContext()
+
+    //调用LauncherBackend的setAppId方法向LaunchServer发送APPId
     launcherBackend.setAppId(appId)
   }
 

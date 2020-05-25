@@ -27,10 +27,12 @@ import org.apache.spark.util.collection.WritablePartitionedPairCollection._
  * of its estimated size in bytes.
  *
  * The buffer can support up to 1073741819 elements.
+ *
+ * 与AppendOnlyMap类似
  */
-private[spark] class PartitionedPairBuffer[K, V](initialCapacity: Int = 64)
-  extends WritablePartitionedPairCollection[K, V] with SizeTracker
-{
+private[spark] class PartitionedPairBuffer[K, V](initialCapacity: Int = 64) extends WritablePartitionedPairCollection[K, V] with SizeTracker {
+
+
   import PartitionedPairBuffer._
 
   require(initialCapacity <= MAXIMUM_CAPACITY,
@@ -51,6 +53,8 @@ private[spark] class PartitionedPairBuffer[K, V](initialCapacity: Int = 64)
     data(2 * curSize) = (partition, key.asInstanceOf[AnyRef])
     data(2 * curSize + 1) = value.asInstanceOf[AnyRef]
     curSize += 1
+
+    //对集合进行采样
     afterUpdate()
   }
 
